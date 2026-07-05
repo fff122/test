@@ -775,6 +775,7 @@ class AppTtsService {
     required bool slow,
   }) async {
     final endpoint = Uri.parse('${config.baseUrl.replaceAll(RegExp(r'/+$'), '')}/audio/speech');
+    final voice = resolveTtsVoice(config);
     final response = await http
         .post(
           endpoint,
@@ -784,7 +785,7 @@ class AppTtsService {
           },
           body: jsonEncode({
             'model': config.model,
-            'voice': config.voice,
+            'voice': voice,
             'input': text,
             'response_format': 'mp3',
             'speed': slow ? 0.85 : 1.0,
@@ -800,6 +801,16 @@ class AppTtsService {
     await _apiPlayer.play(BytesSource(response.bodyBytes));
     await completed.timeout(Duration(seconds: max(15, text.length * 3)));
   }
+}
+
+String resolveTtsVoice(TtsApiConfig config) {
+  final voice = config.voice.trim();
+  final model = config.model.trim();
+  final baseUrl = config.baseUrl.toLowerCase();
+  if (baseUrl.contains('siliconflow') && !voice.contains(':') && model.isNotEmpty) {
+    return '$model:$voice';
+  }
+  return voice;
 }
 
 String stripCodeFence(String text) {
@@ -3784,7 +3795,14 @@ class _TtsApiSettingsPageState extends State<TtsApiSettingsPage> {
           const SizedBox(height: 12),
           TextField(controller: _model, decoration: const InputDecoration(labelText: 'TTS 模型', border: OutlineInputBorder())),
           const SizedBox(height: 12),
-          TextField(controller: _voice, decoration: const InputDecoration(labelText: 'Voice', border: OutlineInputBorder())),
+          TextField(
+            controller: _voice,
+            decoration: const InputDecoration(
+              labelText: 'Voice',
+              helperText: 'SiliconFlow 可填 anna，发送时会自动转为 模型名:anna。',
+              border: OutlineInputBorder(),
+            ),
+          ),
           const SizedBox(height: 12),
           TextField(controller: _apiKey, obscureText: true, decoration: const InputDecoration(labelText: 'API Key', border: OutlineInputBorder())),
           const SizedBox(height: 20),
