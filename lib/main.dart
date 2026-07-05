@@ -857,6 +857,22 @@ String formatDuration(int seconds) {
   return '$minutes 分 $remain 秒';
 }
 
+class EnglishWord {
+  const EnglishWord({
+    required this.word,
+    required this.meaning,
+    required this.partOfSpeech,
+    required this.category,
+    required this.grade,
+  });
+
+  final String word;
+  final String meaning;
+  final String partOfSpeech;
+  final String category;
+  final int grade;
+}
+
 final questionBank = buildQuestionBank();
 final dictationBank = buildDictationBank();
 
@@ -869,14 +885,580 @@ const chineseWordsByGrade = <int, List<String>>{
   6: ['徘徊', '严峻', '领域', '贡献', '诞生', '锻炼', '毅力', '目标', '抉择', '荣誉', '挫折', '真理', '信念', '陶醉', '慷慨', '渺小', '浏览', '抵御', '沉着', '卓越'],
 };
 
-const englishWordsByGrade = <int, Map<String, String>>{
-  1: {'apple': '苹果', 'book': '书', 'cat': '猫', 'dog': '狗', 'pen': '钢笔', 'bag': '书包', 'red': '红色', 'blue': '蓝色', 'one': '一', 'two': '二'},
-  2: {'school': '学校', 'teacher': '老师', 'student': '学生', 'family': '家庭', 'father': '爸爸', 'mother': '妈妈', 'water': '水', 'milk': '牛奶', 'happy': '高兴的', 'small': '小的'},
-  3: {'window': '窗户', 'picture': '图片', 'friend': '朋友', 'orange': '橙子', 'banana': '香蕉', 'morning': '早晨', 'evening': '傍晚', 'listen': '听', 'speak': '说', 'write': '写'},
-  4: {'library': '图书馆', 'weather': '天气', 'because': '因为', 'before': '在以前', 'after': '在以后', 'usually': '通常', 'lesson': '课程', 'animal': '动物', 'vegetable': '蔬菜', 'computer': '电脑'},
-  5: {'exercise': '锻炼', 'holiday': '假期', 'country': '国家', 'healthy': '健康的', 'important': '重要的', 'interesting': '有趣的', 'different': '不同的', 'question': '问题', 'answer': '答案', 'minute': '分钟'},
-  6: {'language': '语言', 'science': '科学', 'history': '历史', 'future': '未来', 'project': '项目', 'example': '例子', 'practice': '练习', 'careful': '仔细的', 'successful': '成功的', 'wonderful': '精彩的'},
-};
+const englishVocabularyRaw = r'''
+01第一类：动物
+bear 熊 n.
+rabbit 兔子 n.
+mouse 老鼠 n.
+cat 猫 n.
+dog 狗 n.
+horse 马 n.
+pig 猪 n.
+cow 奶牛 n.
+sheep 绵羊 n.
+lion 狮子 n.
+tiger 老虎 n.
+panda 熊猫 n.
+elephant 大象 n.
+monkey 猴子 n.
+zebra 斑马 n.
+bird 鸟 n.
+duck 鸭子 n.
+chicken 鸡 n.
+ant 蚂蚁 n.
+bee 蜜蜂 n.
+butterfly 蝴蝶 n.
+dragonfly 蜻蜓 n.
+firefly 萤火虫 n.
+grasshopper 蚱蜢 n.
+cicada 蝉 n.
+cricket 蟋蟀 n.
+fish 鱼 n.
+frog 青蛙 n.
+snake 蛇 n.
+turtle 乌龟 n.
+goat 山羊 n.
+donkey 驴 n.
+fox 狐狸 n.
+wolf 狼 n.
+deer 鹿 n.
+camel 骆驼 n.
+kangaroo 袋鼠 n.
+penguin 企鹅 n.
+whale 鲸 n.
+dolphin 海豚 n.
+shark 鲨鱼 n.
+octopus 章鱼 n.
+spider 蜘蛛 n.
+snail 蜗牛 n.
+worm 蚯蚓 n.
+fly 苍蝇 n.
+mosquito 蚊子 n.
+ladybird 瓢虫 n.
+bat 蝙蝠 n.
+owl 猫头鹰 n.
+eagle 老鹰 n.
+parrot 鹦鹉 n.
+hen 母鸡 n.
+rooster 公鸡 n.
+turkey 火鸡 n.
+goose 鹅 n.
+swan 天鹅 n.
+seal 海豹 n.
+yak 牦牛 n.
+ox 公牛 n.
+
+02第二类：植物 & 自然
+plant 植物 n.
+tree 树 n.
+flower 花 n.
+leaf 叶子 n.
+grass 草 n.
+seed 种子 n.
+sprout 幼苗 n.
+rose 玫瑰 n.
+forest 森林 n.
+river 河流 n.
+lake 湖泊 n.
+stream 小溪 n.
+mountain 山 n.
+hill 小山 n.
+sky 天空 n.
+sun 太阳 n.
+moon 月亮 n.
+star 星星 n.
+rain 雨 n.
+snow 雪 n.
+wind 风 n.
+cloud 云 n.
+rainbow 彩虹 n.
+air 空气 n.
+stone 石头 n.
+sand 沙子 n.
+soil 土壤 n.
+path 小路 n.
+road 公路 n.
+bridge 桥 n.
+field 田野 n.
+beach 海滩 n.
+sea 海 n.
+ocean 海洋 n.
+island 岛屿 n.
+water 水 n.
+fire 火 n.
+wood 木头 n.
+leafy 多叶的 adj.
+green 绿色的 adj.
+fresh 新鲜的 adj.
+natural 自然的 adj.
+wet 潮湿的 adj.
+dry 干燥的 adj.
+hot 炎热的 adj.
+cold 寒冷的 adj.
+cool 凉爽的 adj.
+warm 温暖的 adj.
+sunny 晴朗的 adj.
+rainy 下雨的 adj.
+snowy 下雪的 adj.
+windy 有风的 adj.
+cloudy 多云的 adj.
+storm 暴风雨 n.
+weather 天气 n.
+season 季节 n.
+spring 春天 n.
+summer 夏天 n.
+autumn 秋天 n.
+winter 冬天 n.
+climate 气候 n.
+
+03第三类：食物 & 饮品
+rice 米饭 n.
+noodles 面条 n.
+bread 面包 n.
+cake 蛋糕 n.
+cookie 饼干 n.
+chocolate 巧克力 n.
+ice cream 冰淇淋 n.
+hamburger 汉堡 n.
+sandwich 三明治 n.
+hot dog 热狗 n.
+pizza 披萨 n.
+soup 汤 n.
+salad 沙拉 n.
+meat 肉 n.
+beef 牛肉 n.
+pork 猪肉 n.
+egg 鸡蛋 n.
+milk 牛奶 n.
+juice 果汁 n.
+tea 茶 n.
+coffee 咖啡 n.
+cola 可乐 n.
+fruit 水果 n.
+apple 苹果 n.
+banana 香蕉 n.
+orange 橙子 n.
+pear 梨 n.
+peach 桃子 n.
+grape 葡萄 n.
+watermelon 西瓜 n.
+pineapple 菠萝 n.
+mango 芒果 n.
+strawberry 草莓 n.
+vegetable 蔬菜 n.
+tomato 西红柿 n.
+potato 土豆 n.
+carrot 胡萝卜 n.
+cabbage 卷心菜 n.
+onion 洋葱 n.
+bean 豆子 n.
+pumpkin 南瓜 n.
+corn 玉米 n.
+breakfast 早餐 n.
+lunch 午餐 n.
+dinner 晚餐 n.
+meal 一餐 n.
+sweet 糖果 n.
+jam 果酱 n.
+butter 黄油 n.
+oil 食用油 n.
+salt 盐 n.
+sugar 糖 n.
+knife 刀 n.
+fork 叉 n.
+spoon 勺 n.
+plate 盘子 n.
+bowl 碗 n.
+cup 杯子 n.
+bottle 瓶子 n.
+
+04第四类：人体部位 & 健康
+head 头 n.
+hair 头发 n.
+face 脸 n.
+eye 眼睛 n.
+ear 耳朵 n.
+nose 鼻子 n.
+mouth 嘴 n.
+tooth 牙齿 n.
+neck 脖子 n.
+shoulder 肩膀 n.
+arm 手臂 n.
+hand 手 n.
+finger 手指 n.
+leg 腿 n.
+knee 膝盖 n.
+foot 脚 n.
+toe 脚趾 n.
+back 背部 n.
+body 身体 n.
+tail 尾巴 n.
+hurt 疼 v.
+ache 疼痛 n./v.
+fever 发烧 n.
+cold 感冒 n.
+cough 咳嗽 n./v.
+headache 头疼 n.
+toothache 牙疼 n.
+earache 耳朵疼 n.
+stomachache 胃痛 n.
+ill 生病的 adj.
+sick 生病的 adj.
+healthy 健康的 adj.
+weak 虚弱的 adj.
+strong 强壮的 adj.
+tired 累的 adj.
+hungry 饿的 adj.
+thirsty 渴的 adj.
+hot 热的 adj.
+doctor 医生 n.
+nurse 护士 n.
+hospital 医院 n.
+medicine 药 n.
+pill 药片 n.
+rest 休息 v./n.
+sleep 睡觉 v.
+exercise 锻炼 n./v.
+check 检查 v.
+care 照顾 n./v.
+feel 感觉 v.
+pain 疼痛 n.
+health 健康 n.
+recover 恢复 v.
+
+05第五类：学习用品 & 校园
+school 学校 n.
+class 班级 n.
+classroom 教室 n.
+teacher 老师 n.
+student 学生 n.
+desk 课桌 n.
+chair 椅子 n.
+blackboard 黑板 n.
+book 书 n.
+notebook 笔记本 n.
+schoolbag 书包 n.
+pen 钢笔 n.
+pencil 铅笔 n.
+eraser 橡皮 n.
+ruler 尺子 n.
+crayon 蜡笔 n.
+marker 记号笔 n.
+sharpener 卷笔刀 n.
+paper 纸 n.
+dictionary 词典 n.
+homework 作业 n.
+lesson 课 n.
+test 测试 n.
+exam 考试 n.
+subject 科目 n.
+English 英语 n.
+Chinese 语文 n.
+Maths 数学 n.
+Music 音乐 n.
+Art 美术 n.
+PE 体育 n.
+Science 科学 n.
+Computer 电脑 n.
+library 图书馆 n.
+office 办公室 n.
+playground 操场 n.
+reading room 阅览室 n.
+music room 音乐教室 n.
+computer room 电脑教室 n.
+noticeboard 公告栏 n.
+teacher's desk 讲台 n.
+read 读 v.
+write 写 v.
+listen 听 v.
+learn 学习 v.
+study 学习 v.
+answer 回答 v.
+ask 问 v.
+spell 拼写 v.
+copy 抄写 v.
+draw 画 v.
+open 打开 v.
+close 关闭 v.
+
+06第六类：家居 & 房间
+house 房子 n.
+home 家 n.
+room 房间 n.
+bedroom 卧室 n.
+living room 客厅 n.
+bathroom 浴室 n.
+kitchen 厨房 n.
+study 书房 n.
+toilet 厕所 n.
+bed 床 n.
+table 桌子 n.
+chair 椅子 n.
+sofa 沙发 n.
+desk 书桌 n.
+lamp 灯 n.
+light 灯 n.
+door 门 n.
+window 窗户 n.
+wall 墙 n.
+floor 地板 n.
+mirror 镜子 n.
+fridge 冰箱 n.
+TV 电视 n.
+radio 收音机 n.
+computer 电脑 n.
+telephone 电话 n.
+fan 风扇 n.
+air-conditioner 空调 n.
+clock 钟 n.
+watch 手表 n.
+chopsticks 筷子 n.
+clean 打扫 v.
+wash 洗 v.
+cook 做饭 v.
+
+07第七类：交通 & 地点
+car 小汽车 n.
+bus 公交车 n.
+bike 自行车 n.
+train 火车 n.
+plane 飞机 n.
+ship 轮船 n.
+boat 小船 n.
+taxi 出租车 n.
+subway 地铁 n.
+jeep 吉普车 n.
+van 面包车 n.
+street 街道 n.
+station 车站 n.
+airport 机场 n.
+stop 站点 n.
+park 公园 n.
+zoo 动物园 n.
+cinema 电影院 n.
+shop 商店 n.
+supermarket 超市 n.
+bank 银行 n.
+post office 邮局 n.
+city 城市 n.
+town 城镇 n.
+village 乡村 n.
+country 国家 n.
+China 中国 n.
+England 英国 n.
+America 美国 n.
+Japan 日本 n.
+go 去 v.
+come 来 v.
+walk 走 v.
+run 跑 v.
+drive 开车 v.
+ride 骑 v.
+travel 旅行 v.
+visit 参观 v.
+
+08第八类：高频动词
+go 去 v.
+come 来 v.
+do 做 v.
+make 制作 v.
+get 得到 v.
+have 有 v.
+take 拿 v.
+give 给 v.
+put 放 v.
+bring 带来 v.
+eat 吃 v.
+drink 喝 v.
+sleep 睡 v.
+read 读 v.
+write 写 v.
+listen 听 v.
+speak 说 v.
+say 说 v.
+tell 告诉 v.
+ask 问 v.
+play 玩 v.
+run 跑 v.
+walk 走 v.
+jump 跳 v.
+climb 爬 v.
+swim 游泳 v.
+fly 飞 v.
+see 看见 v.
+watch 看 v.
+look 看 v.
+hear 听见 v.
+feel 感觉 v.
+help 帮助 v.
+learn 学习 v.
+study 学习 v.
+work 工作 v.
+clean 打扫 v.
+wash 洗 v.
+cook 做饭 v.
+buy 买 v.
+sell 卖 v.
+start 开始 v.
+finish 完成 v.
+stop 停止 v.
+
+09第九类：形容词 & 感受
+big 大的 adj.
+small 小的 adj.
+long 长的 adj.
+short 短的 adj.
+tall 高的 adj.
+fat 胖的 adj.
+thin 瘦的 adj.
+old 老的 adj.
+young 年轻的 adj.
+new 新的 adj.
+good 好的 adj.
+bad 坏的 adj.
+fine 好的 adj.
+great 很好的 adj.
+happy 开心的 adj.
+sad 难过的 adj.
+angry 生气的 adj.
+tired 累的 adj.
+busy 忙的 adj.
+free 空闲的 adj.
+hot 热的 adj.
+cold 冷的 adj.
+warm 温暖的 adj.
+cool 凉爽的 adj.
+easy 简单的 adj.
+hard 困难的 adj.
+fast 快的 adj.
+slow 慢的 adj.
+beautiful 美丽的 adj.
+cute 可爱的 adj.
+lovely 可爱的 adj.
+ugly 丑的 adj.
+dirty 脏的 adj.
+interesting 有趣的 adj.
+boring 无聊的 adj.
+funny 好笑的 adj.
+quiet 安静的 adj.
+noisy 吵闹的 adj.
+favourite 最喜欢的 adj.
+
+10第十类：数词 / 时间 / 疑问词
+one 一 num.
+two 二 num.
+three 三 num.
+four 四 num.
+five 五 num.
+six 六 num.
+seven 七 num.
+eight 八 num.
+nine 九 num.
+ten 十 num.
+eleven 十一 num.
+twelve 十二 num.
+thirteen 十三 num.
+twenty 二十 num.
+thirty 三十 num.
+forty 四十 num.
+fifty 五十 num.
+hundred 一百 num.
+first 第一 adj.
+second 第二 adj.
+third 第三 adj.
+today 今天 n.
+tomorrow 明天 n.
+yesterday 昨天 n.
+morning 早晨 n.
+afternoon 下午 n.
+evening 晚上 n.
+night 夜晚 n.
+week 周 n.
+weekend 周末 n.
+what 什么 pron.
+who 谁 pron.
+where 哪里 adv.
+when 什么时候 adv.
+why 为什么 adv.
+how 怎样 adv.
+how many 多少 phrase.
+how much 多少钱 phrase.
+what time 几点 phrase.
+which 哪一个 pron.
+''';
+
+final englishVocabulary = buildEnglishVocabulary();
+final englishWordsByGrade = buildEnglishWordsByGrade();
+
+List<EnglishWord> buildEnglishVocabulary() {
+  final categoryMatches = RegExp(r'(\d{2})第.+?类：([^\n]+)').allMatches(englishVocabularyRaw).toList();
+  final entryPattern = RegExp(
+    r"([A-Za-z][A-Za-z'\-\s]*?)\s+([\u4e00-\u9fff，/]+)\s+(n\./v\.|v\./n\.|adj\.|adv\.|pron\.|num\.|phrase\.|n\.|v\.)",
+  );
+  final words = <EnglishWord>[];
+  final seen = <String>{};
+
+  for (final match in entryPattern.allMatches(englishVocabularyRaw)) {
+    final category = _categoryForOffset(categoryMatches, match.start);
+    final word = match.group(1)!.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final key = word.toLowerCase();
+    if (seen.contains(key)) {
+      continue;
+    }
+    seen.add(key);
+    words.add(
+      EnglishWord(
+        word: word,
+        meaning: match.group(2)!.trim(),
+        partOfSpeech: match.group(3)!.trim(),
+        category: category.name,
+        grade: category.grade,
+      ),
+    );
+  }
+
+  return words;
+}
+
+({String name, int grade}) _categoryForOffset(List<RegExpMatch> matches, int offset) {
+  var name = '英语词汇';
+  var number = 1;
+  for (final match in matches) {
+    if (match.start > offset) {
+      break;
+    }
+    number = int.parse(match.group(1)!);
+    name = match.group(2)!.trim();
+  }
+  return (name: name, grade: _gradeForEnglishCategory(number));
+}
+
+int _gradeForEnglishCategory(int category) {
+  if (category <= 1) {
+    return 1;
+  }
+  if (category <= 3) {
+    return 2;
+  }
+  if (category <= 5) {
+    return 3;
+  }
+  if (category <= 7) {
+    return 4;
+  }
+  if (category <= 9) {
+    return 5;
+  }
+  return 6;
+}
+
+Map<int, Map<String, String>> buildEnglishWordsByGrade() {
+  final wordsByGrade = {for (var grade = 1; grade <= 6; grade++) grade: <String, String>{}};
+  for (final item in englishVocabulary) {
+    wordsByGrade[item.grade]![item.word] = item.meaning;
+  }
+  return wordsByGrade;
+}
 
 List<DictationItem> buildDictationBank() {
   final items = <DictationItem>[];
@@ -940,7 +1522,7 @@ List<String> makeNumberOptions(int answer) {
 }
 
 List<String> makeMeaningOptions(String answer) {
-  final pool = ['苹果', '书', '学校', '老师', '家庭', '天气', '问题', '答案', '科学', '未来'];
+  final pool = englishVocabulary.map((item) => item.meaning).where((item) => item != answer).toList();
   final values = <String>{answer, ...pool.where((item) => item != answer).take(3)};
   return values.take(4).toList();
 }
@@ -1147,6 +1729,29 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
                   child: Text('已匹配 ${questions.length} 道题，其中自定义 $customCount 道。'),
                 ),
                 const SizedBox(height: 18),
+                if (_subject == Subject.english) ...[
+                  AppPanel(
+                    icon: Icons.style_outlined,
+                    title: '背单词',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('本年级共享词库 ${englishVocabulary.where((item) => item.grade == _grade).length} 个词，练习、听写和背单词共用。'),
+                        const SizedBox(height: 12),
+                        FilledButton.tonalIcon(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => WordStudyPage(grade: _grade)),
+                            );
+                          },
+                          icon: const Icon(Icons.play_lesson_outlined),
+                          label: const Text('开始背单词'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
                 AppPanel(
                   icon: Icons.document_scanner_outlined,
                   title: '导入题库',
@@ -1233,6 +1838,139 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
     if (mounted) {
       setState(() => _customFuture = LocalStore.loadCustomQuestions());
     }
+  }
+}
+
+class WordStudyPage extends StatefulWidget {
+  const WordStudyPage({required this.grade, super.key});
+
+  final int grade;
+
+  @override
+  State<WordStudyPage> createState() => _WordStudyPageState();
+}
+
+class _WordStudyPageState extends State<WordStudyPage> {
+  final _tts = AppTtsService();
+  late final List<EnglishWord> _words = englishVocabulary.where((item) => item.grade == widget.grade).toList();
+  int _index = 0;
+  bool _showMeaning = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _speakCurrent());
+  }
+
+  @override
+  void dispose() {
+    _tts.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final word = _words[_index];
+    return Scaffold(
+      appBar: AppBar(title: Text('${widget.grade} 年级背单词')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          LinearProgressIndicator(value: (_index + 1) / _words.length),
+          const SizedBox(height: 16),
+          Text('第 ${_index + 1} 个 / 共 ${_words.length} 个', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 18),
+          Card(
+            elevation: 0,
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(word.word, style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 10),
+                  Text('${word.partOfSpeech}  ${word.category}', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 22),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: _showMeaning
+                        ? Text(word.meaning, key: ValueKey(word.word), style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700))
+                        : Text('点击显示中文', key: ValueKey('${word.word}_hidden'), style: Theme.of(context).textTheme.titleLarge),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            alignment: WrapAlignment.center,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: _speakCurrent,
+                icon: const Icon(Icons.volume_up_outlined),
+                label: const Text('播放'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _showMeaning = !_showMeaning),
+                icon: Icon(_showMeaning ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                label: Text(_showMeaning ? '隐藏中文' : '显示中文'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _index == 0 ? null : _previous,
+                child: const Text('上一个'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton(
+                onPressed: _index == _words.length - 1 ? null : _next,
+                child: const Text('下一个'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _speakCurrent() async {
+    try {
+      await _tts.speak(text: _words[_index].word, language: Subject.english.ttsLanguage, slow: false);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  void _previous() {
+    setState(() {
+      _index--;
+      _showMeaning = true;
+    });
+    _speakCurrent();
+  }
+
+  void _next() {
+    setState(() {
+      _index++;
+      _showMeaning = true;
+    });
+    _speakCurrent();
   }
 }
 

@@ -46,6 +46,13 @@ jobs:
       - name: Set Android app label
         run: sed -i 's/android:label="xuebao"/android:label="学宝"/' android/app/src/main/AndroidManifest.xml
 
+      - name: Set Android launcher icon
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cp assets/images/cover.png android/app/src/main/res/drawable/app_icon.png
+          sed -i 's/android:icon="@mipmap\/ic_launcher"/android:icon="@drawable\/app_icon"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:roundIcon="@mipmap\/ic_launcher_round"/android:roundIcon="@drawable\/app_icon"/' android/app/src/main/AndroidManifest.xml
+
       - name: Add Android permissions
         run: sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
 
