@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -85,6 +83,17 @@ Subject subjectFromKey(String value) {
     (subject) => subject.key == value,
     orElse: () => Subject.math,
   );
+}
+
+Subject subjectFromImportValue(Object? value) {
+  final key = '${value ?? ''}'.trim().toLowerCase();
+  if (key == 'english' || key == 'en' || key == '英语' || key == '英文') {
+    return Subject.english;
+  }
+  if (key == 'chinese' || key == 'cn' || key == '语文' || key == '中文') {
+    return Subject.chinese;
+  }
+  return Subject.math;
 }
 
 class PracticeQuestion {
@@ -375,6 +384,24 @@ class ResultItem {
   final bool isCorrect;
 }
 
+class AiHintSettings {
+  const AiHintSettings({
+    required this.dailyLimit,
+  });
+
+  final int dailyLimit;
+
+  Map<String, Object?> toJson() {
+    return {'dailyLimit': dailyLimit};
+  }
+
+  factory AiHintSettings.fromJson(Map<String, Object?> json) {
+    return AiHintSettings(dailyLimit: json['dailyLimit'] as int? ?? 3);
+  }
+
+  static const defaults = AiHintSettings(dailyLimit: 3);
+}
+
 class AiConfig {
   const AiConfig({
     required this.enabled,
@@ -474,6 +501,9 @@ class LocalStore {
   static const _customDictationKey = 'xuebao_custom_dictation';
   static const _aiConfigKey = 'xuebao_ai_config';
   static const _ttsApiConfigKey = 'xuebao_tts_api_config';
+  static const _aiHintSettingsKey = 'xuebao_ai_hint_settings';
+  static const _aiHintUsageDateKey = 'xuebao_ai_hint_usage_date';
+  static const _aiHintUsageCountKey = 'xuebao_ai_hint_usage_count';
   static const _rewardKey = 'xuebao_rewards';
 
   static Future<List<MistakeEntry>> loadMistakes() async {
@@ -607,6 +637,40 @@ class LocalStore {
     await prefs.setString(_ttsApiConfigKey, jsonEncode(config.toJson()));
   }
 
+  static Future<AiHintSettings> loadAiHintSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_aiHintSettingsKey);
+    if (raw == null || raw.isEmpty) {
+      return AiHintSettings.defaults;
+    }
+    return AiHintSettings.fromJson(Map<String, Object?>.from(jsonDecode(raw) as Map));
+  }
+
+  static Future<void> saveAiHintSettings(AiHintSettings settings) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_aiHintSettingsKey, jsonEncode(settings.toJson()));
+  }
+
+  static Future<int> loadTodayAiHintCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    if (prefs.getString(_aiHintUsageDateKey) != today) {
+      await prefs.setString(_aiHintUsageDateKey, today);
+      await prefs.setInt(_aiHintUsageCountKey, 0);
+      return 0;
+    }
+    return prefs.getInt(_aiHintUsageCountKey) ?? 0;
+  }
+
+  static Future<int> useAiHint() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final current = await loadTodayAiHintCount();
+    await prefs.setString(_aiHintUsageDateKey, today);
+    await prefs.setInt(_aiHintUsageCountKey, current + 1);
+    return current + 1;
+  }
+
   static Future<RewardProfile> loadRewards() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_rewardKey);
@@ -659,70 +723,6 @@ class LocalStore {
       _recordsKey,
       jsonEncode(next.map((item) => item.toJson()).toList()),
     );
-  }
-}
-
-class AiImportService {
-  static Future<String> analyzeImage({
-    required AiConfig config,
-    required XFile image,
-    required String instruction,
-  }) async {
-    if (!config.isReady) {
-      throw const FormatException('请先在设置中开启并填写 AI API 渠道。');
-    }
-
-    final bytes = await File(image.path).readAsBytes();
-    final imageBase64 = base64Encode(bytes);
-    final endpoint = Uri.parse('${config.baseUrl.replaceAll(RegExp(r'/+$'), '')}/chat/completions');
-    final response = await http
-        .post(
-          endpoint,
-          headers: {
-            'Authorization': 'Bearer ${config.apiKey}',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({
-            'model': config.model,
-            'messages': [
-              {
-                'role': 'user',
-                'content': [
-                  {'type': 'text', 'text': instruction},
-                  {
-                    'type': 'image_url',
-                    'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
-                  },
-                ],
-              },
-            ],
-            'temperature': 0.1,
-          }),
-        )
-        .timeout(const Duration(seconds: 60));
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw FormatException('AI 接口返回 ${response.statusCode}：${response.body}');
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final choices = data['choices'] as List<dynamic>?;
-    if (choices == null || choices.isEmpty) {
-      throw const FormatException('AI 接口没有返回可用内容。');
-    }
-    final message = choices.first['message'] as Map<String, dynamic>?;
-    final content = message?['content'];
-    if (content is String) {
-      return stripCodeFence(content).trim();
-    }
-    if (content is List) {
-      return content
-          .map((item) => item is Map && item['text'] is String ? item['text'] as String : '')
-          .where((text) => text.trim().isNotEmpty)
-          .join('\n')
-          .trim();
-    }
-    throw const FormatException('AI 返回格式无法解析。');
   }
 }
 
@@ -803,6 +803,55 @@ class AppTtsService {
   }
 }
 
+class AiHintService {
+  static Future<String> createHint({
+    required AiConfig config,
+    required PracticeQuestion question,
+  }) async {
+    if (!config.isReady) {
+      throw const FormatException('请先在设置中开启并填写 AI API 渠道。');
+    }
+
+    final endpoint = Uri.parse('${config.baseUrl.replaceAll(RegExp(r'/+$'), '')}/chat/completions');
+    final response = await http
+        .post(
+          endpoint,
+          headers: {
+            'Authorization': 'Bearer ${config.apiKey}',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': config.model,
+            'messages': [
+              {
+                'role': 'system',
+                'content': '你是小学生学习助手。只给解题提示，不许直接说出最终答案，不许列出完整计算结果。控制在 60 字以内。',
+              },
+              {
+                'role': 'user',
+                'content': '科目：${question.subject.label}\n年级：${question.grade}\n题目：${question.question}\n请给一个小提示，不能透露答案。',
+              },
+            ],
+            'temperature': 0.4,
+          }),
+        )
+        .timeout(const Duration(seconds: 45));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw FormatException('AI 提示接口返回 ${response.statusCode}：${response.body}');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final choices = data['choices'] as List<dynamic>?;
+    final message = choices == null || choices.isEmpty ? null : choices.first['message'] as Map<String, dynamic>?;
+    final content = message?['content'];
+    if (content is String && content.trim().isNotEmpty) {
+      return content.trim();
+    }
+    throw const FormatException('AI 没有返回可用提示。');
+  }
+}
+
 String resolveTtsVoice(TtsApiConfig config) {
   final voice = config.voice.trim();
   final model = config.model.trim();
@@ -811,12 +860,6 @@ String resolveTtsVoice(TtsApiConfig config) {
     return '$model:$voice';
   }
   return voice;
-}
-
-String stripCodeFence(String text) {
-  return text
-      .replaceAll(RegExp(r'^\s*```(?:text|json|csv)?\s*', multiLine: false), '')
-      .replaceAll(RegExp(r'\s*```\s*$', multiLine: false), '');
 }
 
 String normalizeAnswer(String value, Subject subject) {
@@ -851,6 +894,20 @@ class EnglishWord {
   final String partOfSpeech;
   final String category;
   final int grade;
+}
+
+class WordStudyItem {
+  const WordStudyItem({
+    required this.word,
+    required this.meaning,
+    required this.partOfSpeech,
+    required this.category,
+  });
+
+  final String word;
+  final String meaning;
+  final String partOfSpeech;
+  final String category;
 }
 
 final questionBank = buildQuestionBank();
@@ -1857,23 +1914,52 @@ class HomePage extends StatelessWidget {
         const SizedBox(height: 6),
         Text('练习、听写、闯关和本机题库', style: Theme.of(context).textTheme.bodyLarge),
         const SizedBox(height: 24),
-        FutureBuilder<RewardProfile>(
-          future: LocalStore.loadRewards(),
+        FutureBuilder<HomeDashboardData>(
+          future: loadHomeDashboardData(),
           builder: (context, snapshot) {
-            final rewards = snapshot.data ?? RewardProfile.empty;
-            return AppPanel(
-              icon: Icons.workspace_premium_outlined,
-              title: '学习成长',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${rewards.title}  等级 ${rewards.level}'),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(value: rewards.currentLevelPoints / 100),
-                  const SizedBox(height: 8),
-                  Text('积分 ${rewards.points}，连续学习 ${rewards.streak} 天，满分 ${rewards.perfect} 次'),
-                ],
-              ),
+            final data = snapshot.data ?? HomeDashboardData.empty;
+            final latest = data.records.isEmpty ? null : data.records.first;
+            return Column(
+              children: [
+                AppPanel(
+                  icon: Icons.dashboard_customize_outlined,
+                  title: '学习面板',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${data.rewards.title}  等级 ${data.rewards.level}'),
+                      const SizedBox(height: 8),
+                      LinearProgressIndicator(value: data.rewards.currentLevelPoints / 100),
+                      const SizedBox(height: 12),
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 2.35,
+                        children: [
+                          DashboardTile(label: '积分', value: '${data.rewards.points}', icon: Icons.stars_outlined),
+                          DashboardTile(label: '连续学习', value: '${data.rewards.streak} 天', icon: Icons.local_fire_department_outlined),
+                          DashboardTile(label: '练习题库', value: '${data.totalQuestions} 题', icon: Icons.fact_check_outlined),
+                          DashboardTile(label: '听写词库', value: '${data.totalDictation} 个', icon: Icons.hearing_outlined),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                AppPanel(
+                  icon: Icons.insights_outlined,
+                  title: '最近学习',
+                  child: latest == null
+                      ? const Text('还没有学习记录，先完成一次练习或听写。')
+                      : Text(
+                          '${latest.subject.label} ${latest.mode}：${latest.score} 分，'
+                          '${latest.correct}/${latest.total} 正确，用时 ${formatDuration(latest.durationSeconds)}',
+                        ),
+                ),
+              ],
             );
           },
         ),
@@ -1887,31 +1973,95 @@ class HomePage extends StatelessWidget {
           childAspectRatio: 0.92,
           children: Subject.values.map((subject) => SubjectCard(subject: subject)).toList(),
         ),
-        const SizedBox(height: 20),
-        FutureBuilder<List<PracticeRecord>>(
-          future: LocalStore.loadRecords(),
-          builder: (context, snapshot) {
-            final records = snapshot.data ?? [];
-            final latest = records.isEmpty ? null : records.first;
-            return AppPanel(
-              icon: Icons.insights_outlined,
-              title: '最近学习',
-              child: latest == null
-                  ? const Text('还没有学习记录，先完成一次练习或听写。')
-                  : Text(
-                      '${latest.subject.label} ${latest.mode}：${latest.score} 分，'
-                      '${latest.correct}/${latest.total} 正确，用时 ${formatDuration(latest.durationSeconds)}',
-                    ),
-            );
-          },
-        ),
         const SizedBox(height: 12),
         const AppPanel(
           icon: Icons.security_outlined,
           title: '本地隐私',
-          child: Text('练习记录保存在当前手机。TTS 朗读和 AI 导入只会调用你在设置中配置的 API。'),
+          child: Text('练习记录保存在当前手机。TTS 朗读和 AI 小提示只会调用你在设置中配置的 API。'),
         ),
       ],
+    );
+  }
+}
+
+class HomeDashboardData {
+  const HomeDashboardData({
+    required this.rewards,
+    required this.records,
+    required this.customQuestions,
+    required this.customDictation,
+  });
+
+  final RewardProfile rewards;
+  final List<PracticeRecord> records;
+  final List<PracticeQuestion> customQuestions;
+  final List<DictationItem> customDictation;
+
+  int get totalQuestions => questionBank.length + customQuestions.length;
+  int get totalDictation => dictationBank.length + customDictation.length;
+
+  static const empty = HomeDashboardData(
+    rewards: RewardProfile.empty,
+    records: [],
+    customQuestions: [],
+    customDictation: [],
+  );
+}
+
+Future<HomeDashboardData> loadHomeDashboardData() async {
+  final values = await Future.wait<Object>([
+    LocalStore.loadRewards(),
+    LocalStore.loadRecords(),
+    LocalStore.loadCustomQuestions(),
+    LocalStore.loadCustomDictation(),
+  ]);
+  return HomeDashboardData(
+    rewards: values[0] as RewardProfile,
+    records: values[1] as List<PracticeRecord>,
+    customQuestions: values[2] as List<PracticeQuestion>,
+    customDictation: values[3] as List<DictationItem>,
+  );
+}
+
+class DashboardTile extends StatelessWidget {
+  const DashboardTile({
+    required this.label,
+    required this.value,
+    required this.icon,
+    super.key,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(label, style: Theme.of(context).textTheme.labelMedium),
+                  Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1951,7 +2101,9 @@ class PracticeEntryPage extends StatefulWidget {
 class _PracticeEntryPageState extends State<PracticeEntryPage> {
   Subject _subject = Subject.math;
   int _grade = 1;
-  late Future<List<PracticeQuestion>> _customFuture = LocalStore.loadCustomQuestions();
+  int _practiceCount = 10;
+  int _wordStudyCount = 20;
+  late final Future<List<PracticeQuestion>> _customFuture = LocalStore.loadCustomQuestions();
 
   @override
   Widget build(BuildContext context) {
@@ -1960,7 +2112,11 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
       children: [
         const PageTitle(icon: Icons.assignment_outlined, title: '科目练习', subtitle: '选择科目和年级后开始做题'),
         const SizedBox(height: 20),
-        SubjectSelector(value: _subject, onChanged: (value) => setState(() => _subject = value)),
+        SubjectSelector(
+          value: _subject,
+          subjects: const [Subject.math, Subject.english],
+          onChanged: (value) => setState(() => _subject = value),
+        ),
         const SizedBox(height: 18),
         GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
         const SizedBox(height: 18),
@@ -1976,7 +2132,28 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
                 AppPanel(
                   icon: Icons.fact_check_outlined,
                   title: '当前题目',
-                  child: Text('已匹配 ${questions.length} 道题，其中自定义 $customCount 道。'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('已匹配 ${questions.length} 道题，其中自定义 $customCount 道。'),
+                      const SizedBox(height: 12),
+                      const Text('本次练习数量'),
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SegmentedButton<int>(
+                          segments: const [
+                            ButtonSegment(value: 10, label: Text('10题')),
+                            ButtonSegment(value: 20, label: Text('20题')),
+                            ButtonSegment(value: 30, label: Text('30题')),
+                            ButtonSegment(value: 50, label: Text('50题')),
+                          ],
+                          selected: {_practiceCount},
+                          onSelectionChanged: (selection) => setState(() => _practiceCount = selection.first),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 18),
                 if (_subject == Subject.english) ...[
@@ -1988,10 +2165,26 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
                       children: [
                         Text('本年级共享词库 ${englishVocabulary.where((item) => item.grade == _grade).length} 个词，练习、听写和背单词共用。'),
                         const SizedBox(height: 12),
+                        const Text('本次背词数量'),
+                        const SizedBox(height: 8),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SegmentedButton<int>(
+                            segments: const [
+                              ButtonSegment(value: 10, label: Text('10个')),
+                              ButtonSegment(value: 20, label: Text('20个')),
+                              ButtonSegment(value: 50, label: Text('50个')),
+                              ButtonSegment(value: 100, label: Text('100个')),
+                            ],
+                            selected: {_wordStudyCount},
+                            onSelectionChanged: (selection) => setState(() => _wordStudyCount = selection.first),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         FilledButton.tonalIcon(
                           onPressed: () {
                             Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => WordStudyPage(grade: _grade)),
+                              MaterialPageRoute(builder: (_) => WordStudyPage(grade: _grade, count: _wordStudyCount)),
                             );
                           },
                           icon: const Icon(Icons.play_lesson_outlined),
@@ -2002,58 +2195,24 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
                   ),
                   const SizedBox(height: 18),
                 ],
-                AppPanel(
-                  icon: Icons.document_scanner_outlined,
-                  title: '导入题库',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('可以手动输入题目，也可以用已配置的 AI API 识别图片并整理成题库格式。'),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openQuestionImport(ImageSource.camera),
-                            icon: const Icon(Icons.photo_camera_outlined),
-                            label: const Text('拍照 AI 导入'),
-                          ),
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openQuestionImport(ImageSource.gallery),
-                            icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('相册 AI 导入'),
-                          ),
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openQuestionImport(null),
-                            icon: const Icon(Icons.edit_note_outlined),
-                            label: const Text('手动录入'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: custom.isEmpty
-                                ? null
-                                : () async {
-                                    await LocalStore.clearCustomQuestions();
-                                    if (mounted) {
-                                      setState(() => _customFuture = LocalStore.loadCustomQuestions());
-                                    }
-                                  },
-                            icon: const Icon(Icons.delete_outline),
-                            label: const Text('清空自定义'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                const AppPanel(
+                  icon: Icons.data_object_outlined,
+                  title: '题库导入',
+                  child: Text('请到设置页使用标准 JSON 导入数学题、英语题、英语单词或语文听写词。'),
                 ),
                 const SizedBox(height: 22),
                 FilledButton.icon(
                   onPressed: questions.isEmpty
                       ? null
                       : () {
+                          final picked = [...questions]..shuffle(Random());
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => QuizPage(subject: _subject, grade: _grade, questions: questions),
+                              builder: (_) => QuizPage(
+                                subject: _subject,
+                                grade: _grade,
+                                questions: picked.take(_practiceCount).toList(),
+                              ),
                             ),
                           );
                         },
@@ -2075,26 +2234,13 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
     ].where((item) => item.subject == _subject && item.grade == _grade).toList();
   }
 
-  Future<void> _openQuestionImport(ImageSource? source) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => QuestionImportPage(
-          initialSubject: _subject,
-          initialGrade: _grade,
-          source: source,
-        ),
-      ),
-    );
-    if (mounted) {
-      setState(() => _customFuture = LocalStore.loadCustomQuestions());
-    }
-  }
 }
 
 class WordStudyPage extends StatefulWidget {
-  const WordStudyPage({required this.grade, super.key});
+  const WordStudyPage({required this.grade, required this.count, super.key});
 
   final int grade;
+  final int count;
 
   @override
   State<WordStudyPage> createState() => _WordStudyPageState();
@@ -2102,14 +2248,15 @@ class WordStudyPage extends StatefulWidget {
 
 class _WordStudyPageState extends State<WordStudyPage> {
   final _tts = AppTtsService();
-  late final List<EnglishWord> _words = englishVocabulary.where((item) => item.grade == widget.grade).toList();
+  late Future<List<WordStudyItem>> _future;
+  List<WordStudyItem> _words = [];
   int _index = 0;
   bool _showMeaning = true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _speakCurrent());
+    _future = _loadWords();
   }
 
   @override
@@ -2120,56 +2267,75 @@ class _WordStudyPageState extends State<WordStudyPage> {
 
   @override
   Widget build(BuildContext context) {
-    final word = _words[_index];
     return Scaffold(
       appBar: AppBar(title: Text('${widget.grade} 年级背单词')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          LinearProgressIndicator(value: (_index + 1) / _words.length),
-          const SizedBox(height: 16),
-          Text('第 ${_index + 1} 个 / 共 ${_words.length} 个', style: Theme.of(context).textTheme.labelLarge),
-          const SizedBox(height: 18),
-          Card(
-            elevation: 0,
-            child: Padding(
-              padding: const EdgeInsets.all(22),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      body: FutureBuilder<List<WordStudyItem>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (_words.isEmpty) {
+            return const Center(child: Text('当前年级没有可背单词。'));
+          }
+          final word = _words[_index];
+          return ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              LinearProgressIndicator(value: (_index + 1) / _words.length),
+              const SizedBox(height: 16),
+              Text('第 ${_index + 1} 个 / 共 ${_words.length} 个', style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(height: 18),
+              Card(
+                elevation: 0,
+                child: Padding(
+                  padding: const EdgeInsets.all(22),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(word.word, style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 10),
+                      Text('${word.partOfSpeech}  ${word.category}', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 22),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: _showMeaning
+                            ? Text(
+                                word.meaning,
+                                key: ValueKey(word.word),
+                                style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
+                              )
+                            : Text(
+                                '点击显示中文',
+                                key: ValueKey('${word.word}_hidden'),
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                alignment: WrapAlignment.center,
                 children: [
-                  Text(word.word, style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 10),
-                  Text('${word.partOfSpeech}  ${word.category}', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 22),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: _showMeaning
-                        ? Text(word.meaning, key: ValueKey(word.word), style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700))
-                        : Text('点击显示中文', key: ValueKey('${word.word}_hidden'), style: Theme.of(context).textTheme.titleLarge),
+                  FilledButton.tonalIcon(
+                    onPressed: _speakCurrent,
+                    icon: const Icon(Icons.volume_up_outlined),
+                    label: const Text('播放'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => setState(() => _showMeaning = !_showMeaning),
+                    icon: Icon(_showMeaning ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                    label: Text(_showMeaning ? '隐藏中文' : '显示中文'),
                   ),
                 ],
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
-            children: [
-              FilledButton.tonalIcon(
-                onPressed: _speakCurrent,
-                icon: const Icon(Icons.volume_up_outlined),
-                label: const Text('播放'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => setState(() => _showMeaning = !_showMeaning),
-                icon: Icon(_showMeaning ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                label: Text(_showMeaning ? '隐藏中文' : '显示中文'),
-              ),
             ],
-          ),
-        ],
+          );
+        },
       ),
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
@@ -2177,14 +2343,14 @@ class _WordStudyPageState extends State<WordStudyPage> {
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: _index == 0 ? null : _previous,
+                onPressed: _words.isEmpty || _index == 0 ? null : _previous,
                 child: const Text('上一个'),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: FilledButton(
-                onPressed: _index == _words.length - 1 ? null : _next,
+                onPressed: _words.isEmpty || _index == _words.length - 1 ? null : _next,
                 child: const Text('下一个'),
               ),
             ),
@@ -2194,7 +2360,43 @@ class _WordStudyPageState extends State<WordStudyPage> {
     );
   }
 
+  Future<List<WordStudyItem>> _loadWords() async {
+    final custom = await LocalStore.loadCustomDictation();
+    final byWord = <String, WordStudyItem>{
+      for (final item in englishVocabulary.where((item) => item.grade == widget.grade))
+        item.word: WordStudyItem(
+          word: item.word,
+          meaning: item.meaning,
+          partOfSpeech: item.partOfSpeech,
+          category: item.category,
+        ),
+    };
+    for (final item in custom.where((item) => item.subject == Subject.english && item.grade == widget.grade)) {
+      if (item.text.trim().isEmpty) {
+        continue;
+      }
+      byWord[item.text] = WordStudyItem(
+        word: item.text,
+        meaning: item.hint.isEmpty ? '导入单词' : item.hint,
+        partOfSpeech: 'import',
+        category: 'JSON 导入',
+      );
+    }
+    final values = byWord.values.toList()..shuffle(Random());
+    final selected = values.take(widget.count).toList();
+    if (mounted) {
+      setState(() => _words = selected);
+      if (selected.isNotEmpty) {
+        unawaited(_speakCurrent());
+      }
+    }
+    return selected;
+  }
+
   Future<void> _speakCurrent() async {
+    if (_words.isEmpty) {
+      return;
+    }
     try {
       await _tts.speak(text: _words[_index].word, slow: false);
     } catch (error) {
@@ -2208,6 +2410,9 @@ class _WordStudyPageState extends State<WordStudyPage> {
   }
 
   void _previous() {
+    if (_index == 0) {
+      return;
+    }
     setState(() {
       _index--;
       _showMeaning = true;
@@ -2216,6 +2421,9 @@ class _WordStudyPageState extends State<WordStudyPage> {
   }
 
   void _next() {
+    if (_index >= _words.length - 1) {
+      return;
+    }
     setState(() {
       _index++;
       _showMeaning = true;
@@ -2241,46 +2449,287 @@ class GamesPage extends StatefulWidget {
 class _GamesPageState extends State<GamesPage> {
   Subject _subject = Subject.math;
   int _grade = 1;
+  late final Future<List<PracticeQuestion>> _customFuture = LocalStore.loadCustomQuestions();
 
   @override
   Widget build(BuildContext context) {
-    final questions = questionBank.where((item) => item.subject == _subject && item.grade == _grade).toList();
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const PageTitle(icon: Icons.sports_esports_outlined, title: '学习游戏', subtitle: '从题库抽题闯关，完成后获得积分'),
+        const PageTitle(icon: Icons.sports_esports_outlined, title: '学习游戏', subtitle: '限时闯关、生命值和连击得分'),
         const SizedBox(height: 20),
-        SubjectSelector(value: _subject, onChanged: (value) => setState(() => _subject = value)),
+        SubjectSelector(
+          value: _subject,
+          subjects: const [Subject.math, Subject.english],
+          onChanged: (value) => setState(() => _subject = value),
+        ),
         const SizedBox(height: 18),
         GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
         const SizedBox(height: 18),
-        AppPanel(
-          icon: Icons.bolt_outlined,
-          title: '快速闯关',
-          child: Text('从 ${questions.length} 道题中抽取 10 道。答对越多，积分越高。'),
-        ),
-        const SizedBox(height: 12),
-        AppPanel(
-          icon: Icons.military_tech_outlined,
-          title: '满分挑战',
-          child: const Text('目标是 10 道全对，满分会额外增加奖励积分。'),
-        ),
-        const SizedBox(height: 22),
-        FilledButton.icon(
-          onPressed: questions.isEmpty
-              ? null
-              : () {
-                  final picked = [...questions]..shuffle(Random());
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => QuizPage(subject: _subject, grade: _grade, questions: picked.take(10).toList()),
-                    ),
-                  );
-                },
-          icon: const Icon(Icons.play_arrow),
-          label: const Text('开始闯关'),
+        FutureBuilder<List<PracticeQuestion>>(
+          future: _customFuture,
+          builder: (context, snapshot) {
+            final custom = snapshot.data ?? [];
+            final questions = [
+              ...custom,
+              ...questionBank,
+            ].where((item) => item.subject == _subject && item.grade == _grade).toList();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AppPanel(
+                  icon: Icons.bolt_outlined,
+                  title: '星星闯关',
+                  child: Text('60 秒，3 颗心，连对会加分。本年级可抽取 ${questions.length} 道题。'),
+                ),
+                const SizedBox(height: 12),
+                const AppPanel(
+                  icon: Icons.military_tech_outlined,
+                  title: '规则',
+                  child: Text('答对加分，连续答对分数更高；答错扣一颗心，心用完立即结束。'),
+                ),
+                const SizedBox(height: 22),
+                FilledButton.icon(
+                  onPressed: questions.isEmpty
+                      ? null
+                      : () {
+                          final picked = [...questions]..shuffle(Random());
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => GameSessionPage(
+                                subject: _subject,
+                                grade: _grade,
+                                questions: picked.take(20).toList(),
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('开始游戏'),
+                ),
+              ],
+            );
+          },
         ),
       ],
+    );
+  }
+}
+
+class GameSessionPage extends StatefulWidget {
+  const GameSessionPage({
+    required this.subject,
+    required this.grade,
+    required this.questions,
+    super.key,
+  });
+
+  final Subject subject;
+  final int grade;
+  final List<PracticeQuestion> questions;
+
+  @override
+  State<GameSessionPage> createState() => _GameSessionPageState();
+}
+
+class _GameSessionPageState extends State<GameSessionPage> {
+  final _answerController = TextEditingController();
+  final _results = <ResultItem>[];
+  final _startAt = DateTime.now();
+  Timer? _timer;
+  int _remaining = 60;
+  int _lives = 3;
+  int _score = 0;
+  int _combo = 0;
+  int _index = 0;
+  bool _locked = false;
+  bool _finished = false;
+  String _feedback = '准备答题';
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _finished) {
+        return;
+      }
+      if (_remaining <= 1) {
+        setState(() => _remaining = 0);
+        _finish();
+      } else {
+        setState(() => _remaining--);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _answerController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final question = widget.questions[_index];
+    return Scaffold(
+      appBar: AppBar(title: Text('${widget.subject.label}游戏')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Row(
+            children: [
+              Expanded(child: _GameStat(icon: Icons.timer_outlined, label: '时间', value: '${_remaining}s')),
+              const SizedBox(width: 8),
+              Expanded(child: _GameStat(icon: Icons.favorite_outline, label: '生命', value: '$_lives')),
+              const SizedBox(width: 8),
+              Expanded(child: _GameStat(icon: Icons.stars_outlined, label: '得分', value: '$_score')),
+            ],
+          ),
+          const SizedBox(height: 14),
+          LinearProgressIndicator(value: (_index + 1) / widget.questions.length),
+          const SizedBox(height: 16),
+          Text('第 ${_index + 1} 题 / 共 ${widget.questions.length} 题  连击 $_combo', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 16),
+          Text(question.question, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 18),
+          if (question.options.isEmpty) ...[
+            TextField(
+              controller: _answerController,
+              enabled: !_locked,
+              decoration: const InputDecoration(labelText: '输入答案', border: OutlineInputBorder()),
+              onSubmitted: (_) => _submitInput(),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _locked ? null : _submitInput,
+              icon: const Icon(Icons.check_outlined),
+              label: const Text('提交'),
+            ),
+          ] else
+            ...question.options.map(
+              (option) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: FilledButton.tonal(
+                  onPressed: _locked ? null : () => _answer(option),
+                  child: Text(option),
+                ),
+              ),
+            ),
+          const SizedBox(height: 12),
+          AppPanel(
+            icon: _feedback.startsWith('正确') ? Icons.check_circle_outline : Icons.info_outline,
+            title: '状态',
+            child: Text(_feedback),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _submitInput() {
+    final value = _answerController.text.trim();
+    if (value.isEmpty) {
+      return;
+    }
+    _answer(value);
+  }
+
+  void _answer(String answer) {
+    if (_locked || _finished) {
+      return;
+    }
+    final question = widget.questions[_index];
+    final correct = question.options.isEmpty
+        ? normalizeAnswer(answer, question.subject) == normalizeAnswer(question.answer, question.subject)
+        : answer == question.answer;
+    setState(() {
+      _locked = true;
+      if (correct) {
+        _score += 10 + _combo * 2;
+        _combo++;
+        _feedback = '正确，连击 $_combo';
+      } else {
+        _lives--;
+        _combo = 0;
+        _feedback = '错误，剩余 $_lives 颗心';
+      }
+      _results.add(
+        ResultItem(
+          sourceId: question.id,
+          subject: question.subject,
+          grade: question.grade,
+          mode: '游戏',
+          question: question.question,
+          correctAnswer: question.answer,
+          userAnswer: answer,
+          explanation: question.explanation,
+          isCorrect: correct,
+        ),
+      );
+    });
+
+    Future.delayed(const Duration(milliseconds: 450), () {
+      if (!mounted || _finished) {
+        return;
+      }
+      if (_lives <= 0 || _index == widget.questions.length - 1) {
+        _finish();
+        return;
+      }
+      setState(() {
+        _index++;
+        _locked = false;
+        _answerController.clear();
+      });
+    });
+  }
+
+  Future<void> _finish() async {
+    if (_finished) {
+      return;
+    }
+    _finished = true;
+    _timer?.cancel();
+    if (_results.isEmpty) {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+    await saveResultAndOpenPage(context, _results, _startAt);
+  }
+}
+
+class _GameStat extends StatelessWidget {
+  const _GameStat({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            Icon(icon, size: 20),
+            const SizedBox(height: 4),
+            Text(label, style: Theme.of(context).textTheme.labelSmall),
+            Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2290,7 +2739,7 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
   int _grade = 1;
   int _autoNextSeconds = 0;
   int _itemCount = 10;
-  late Future<List<DictationItem>> _customFuture = LocalStore.loadCustomDictation();
+  late final Future<List<DictationItem>> _customFuture = LocalStore.loadCustomDictation();
 
   @override
   Widget build(BuildContext context) {
@@ -2362,49 +2811,10 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
                   ),
                 ),
                 const SizedBox(height: 18),
-                AppPanel(
-                  icon: Icons.document_scanner_outlined,
-                  title: '导入听写本',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('可以手动输入词语，也可以用已配置的 AI API 识别图片并整理成听写内容。'),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openDictationImport(ImageSource.camera),
-                            icon: const Icon(Icons.photo_camera_outlined),
-                            label: const Text('拍照 AI 导入'),
-                          ),
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openDictationImport(ImageSource.gallery),
-                            icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('相册 AI 导入'),
-                          ),
-                          FilledButton.tonalIcon(
-                            onPressed: () => _openDictationImport(null),
-                            icon: const Icon(Icons.edit_note_outlined),
-                            label: const Text('手动录入'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: custom.isEmpty
-                                ? null
-                                : () async {
-                                    await LocalStore.clearCustomDictation();
-                                    if (mounted) {
-                                      setState(() => _customFuture = LocalStore.loadCustomDictation());
-                                    }
-                                  },
-                            icon: const Icon(Icons.delete_outline),
-                            label: const Text('清空自定义'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                const AppPanel(
+                  icon: Icons.data_object_outlined,
+                  title: '词库导入',
+                  child: Text('请到设置页使用标准 JSON 导入语文词语或英语单词。导入后重新进入听写页即可看到新增内容。'),
                 ),
                 const SizedBox(height: 22),
                 FilledButton.icon(
@@ -2441,281 +2851,6 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
     ].where((item) => item.subject == _subject && item.grade == _grade).toList();
   }
 
-  Future<void> _openDictationImport(ImageSource? source) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DictationImportPage(
-          initialSubject: _subject,
-          initialGrade: _grade,
-          source: source,
-        ),
-      ),
-    );
-    if (mounted) {
-      setState(() => _customFuture = LocalStore.loadCustomDictation());
-    }
-  }
-}
-
-class QuestionImportPage extends StatefulWidget {
-  const QuestionImportPage({
-    required this.initialSubject,
-    required this.initialGrade,
-    required this.source,
-    super.key,
-  });
-
-  final Subject initialSubject;
-  final int initialGrade;
-  final ImageSource? source;
-
-  @override
-  State<QuestionImportPage> createState() => _QuestionImportPageState();
-}
-
-class _QuestionImportPageState extends State<QuestionImportPage> {
-  final _picker = ImagePicker();
-  final _rawController = TextEditingController();
-  late Subject _subject = widget.initialSubject;
-  late int _grade = widget.initialGrade;
-  bool _importing = false;
-  String? _message;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.source != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _pickAndAnalyze());
-    }
-  }
-
-  @override
-  void dispose() {
-    _rawController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final questions = parseQuestionText(_rawController.text, _subject, _grade);
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('导入题库')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          PageTitle(
-            icon: widget.source == null
-                ? Icons.edit_note_outlined
-                : widget.source == ImageSource.camera
-                    ? Icons.photo_camera_outlined
-                    : Icons.photo_library_outlined,
-            title: widget.source == null
-                ? '手动录入'
-                : widget.source == ImageSource.camera
-                    ? '拍照 AI 导入'
-                    : '相册 AI 导入',
-            subtitle: 'AI 会整理文本，保存前仍可手动编辑',
-          ),
-          const SizedBox(height: 18),
-          SubjectSelector(value: _subject, onChanged: (value) => setState(() => _subject = value)),
-          const SizedBox(height: 16),
-          GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
-          const SizedBox(height: 16),
-          const AppPanel(
-            icon: Icons.rule_outlined,
-            title: '支持格式',
-            child: Text(
-              '选择题：题目|选项1|选项2|选项3|选项4|答案|解析\n'
-              '填空题：题目=答案\n'
-              'AI 整理后请先检查文字，再保存。',
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (_importing)
-            const AppPanel(
-              icon: Icons.auto_awesome_outlined,
-              title: '正在用 AI 整理',
-              child: LinearProgressIndicator(),
-            )
-          else
-            AppPanel(
-              icon: Icons.edit_note_outlined,
-              title: '识别文本',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _rawController,
-                    minLines: 10,
-                    maxLines: 16,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '例如：3 + 5 = ?|6|7|8|9|8|3 加 5 等于 8。',
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('将保存 ${questions.length} 道题。'),
-                  if (_message != null) ...[
-                    const SizedBox(height: 8),
-                    Text(_message!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  ],
-                ],
-              ),
-            ),
-          const SizedBox(height: 16),
-          AppPanel(
-            icon: Icons.list_alt_outlined,
-            title: '保存预览',
-            child: questions.isEmpty
-                ? const Text('暂无可保存题目。')
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: questions
-                        .take(8)
-                        .map(
-                          (item) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Text('${item.question}  答案：${item.answer}'),
-                          ),
-                        )
-                        .toList(),
-                  ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _importing || widget.source == null ? null : _pickAndAnalyze,
-                  icon: const Icon(Icons.auto_awesome_outlined),
-                  label: const Text('重新 AI 导入'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: questions.isEmpty || _importing ? null : () => _save(questions),
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('保存'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickAndAnalyze() async {
-    setState(() {
-      _importing = true;
-      _message = null;
-    });
-
-    try {
-      final config = await LocalStore.loadAiConfig();
-      if (!config.isReady) {
-        throw const FormatException('请先到设置中填写并开启 AI API 渠道。');
-      }
-      final image = await _picker.pickImage(source: widget.source!, imageQuality: 92);
-      if (image == null) {
-        if (mounted) {
-          setState(() {
-            _importing = false;
-            _message = '没有选择图片。';
-          });
-        }
-        return;
-      }
-
-      final text = await AiImportService.analyzeImage(
-        config: config,
-        image: image,
-        instruction: '请识别图片中的小学${_subject.label}$_grade年级练习题，并整理成纯文本。'
-            '每行一道题。选择题格式：题目|选项1|选项2|选项3|选项4|答案|解析。'
-            '填空题格式：题目=答案。不要输出解释说明，不要输出 Markdown。',
-      );
-
-      if (mounted) {
-        setState(() {
-          _rawController.text = text;
-          _importing = false;
-          _message = text.isEmpty ? '没有识别到文字，请换一张更清晰的图片。' : null;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _importing = false;
-          _message = 'AI 导入失败：$error';
-        });
-      }
-    }
-  }
-
-  Future<void> _save(List<PracticeQuestion> questions) async {
-    await LocalStore.addCustomQuestions(questions);
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已保存 ${questions.length} 道题。')));
-    Navigator.of(context).pop();
-  }
-}
-
-List<PracticeQuestion> parseQuestionText(String text, Subject subject, int grade) {
-  final now = DateTime.now().millisecondsSinceEpoch;
-  final questions = <PracticeQuestion>[];
-  final lines = text
-      .split(RegExp(r'[\n\r]+'))
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
-      .toList();
-
-  for (final line in lines) {
-    final parts = line.split('|').map((part) => part.trim()).where((part) => part.isNotEmpty).toList();
-    if (parts.length >= 6) {
-      final options = parts.sublist(1, parts.length - 2);
-      if (options.length >= 2) {
-        final answer = resolveOptionAnswer(parts[parts.length - 2], options);
-        questions.add(
-          PracticeQuestion(
-            id: 'custom_question_${now}_${questions.length}',
-            subject: subject,
-            grade: grade,
-            question: parts.first,
-            options: options,
-            answer: answer,
-            explanation: parts.last,
-          ),
-        );
-      }
-      continue;
-    }
-
-    final answerMatch = RegExp(r'^(.+?)\s*[=＝]\s*(.+)$').firstMatch(line);
-    if (answerMatch != null) {
-      final question = answerMatch.group(1)!.trim();
-      final answer = answerMatch.group(2)!.trim();
-      if (question.length >= 2 && answer.isNotEmpty) {
-        questions.add(
-          PracticeQuestion(
-            id: 'custom_question_${now}_${questions.length}',
-            subject: subject,
-            grade: grade,
-            question: '$question = ?',
-            options: const [],
-            answer: answer,
-            explanation: '自定义题目。',
-          ),
-        );
-      }
-    }
-  }
-
-  return questions;
 }
 
 String resolveOptionAnswer(String rawAnswer, List<String> options) {
@@ -2734,225 +2869,222 @@ String resolveOptionAnswer(String rawAnswer, List<String> options) {
   return rawAnswer.trim();
 }
 
-class DictationImportPage extends StatefulWidget {
-  const DictationImportPage({
-    required this.initialSubject,
-    required this.initialGrade,
-    required this.source,
-    super.key,
+int parseImportGrade(Object? value) {
+  final parsed = value is int ? value : int.tryParse('${value ?? ''}');
+  return (parsed ?? 1).clamp(1, 6).toInt();
+}
+
+bool shouldGenerateOptions(Map<String, dynamic> item, Subject subject) {
+  if (item['input'] == true || item['inputAnswer'] == true) {
+    return false;
+  }
+  if (item['choice'] == true || item['autoOptions'] == true) {
+    return true;
+  }
+  final type = '${item['type'] ?? item['mode'] ?? ''}'.trim().toLowerCase();
+  if (type.contains('word_problem') || type.contains('application') || type.contains('应用')) {
+    return false;
+  }
+  if (type.contains('calculation') || type.contains('choice') || type.contains('计算') || type.contains('选择')) {
+    return true;
+  }
+  return subject == Subject.english;
+}
+
+List<String> autoOptionsForQuestion({
+  required Subject subject,
+  required String answer,
+  required int seed,
+}) {
+  final trimmed = answer.trim();
+  if (trimmed.isEmpty) {
+    return const [];
+  }
+
+  final numeric = num.tryParse(trimmed);
+  if (numeric != null) {
+    final values = <String>{trimmed};
+    final offsets = [1, -1, 2, -2, 3, 5, -3, 10, -5, -10];
+    for (final offset in offsets) {
+      final next = numeric + offset;
+      if (next < 0) {
+        continue;
+      }
+      values.add(next % 1 == 0 ? next.toInt().toString() : next.toStringAsFixed(1));
+      if (values.length >= 4) {
+        break;
+      }
+    }
+    return rotateOptions(values.take(4).toList(), seed);
+  }
+
+  final pool = subject == Subject.english
+      ? englishVocabulary.map((word) => word.meaning)
+      : <String>[
+          '较大',
+          '较小',
+          '相等',
+          '不能确定',
+          '加法',
+          '减法',
+          '乘法',
+          '除法',
+        ];
+  final options = <String>{trimmed};
+  for (final value in pool) {
+    if (value.trim().isNotEmpty && value != trimmed) {
+      options.add(value);
+    }
+    if (options.length >= 4) {
+      break;
+    }
+  }
+  while (options.length < 4) {
+    options.add('选项 ${options.length + 1}');
+  }
+  return rotateOptions(options.take(4).toList(), seed);
+}
+
+class JsonImportBundle {
+  const JsonImportBundle({
+    required this.questions,
+    required this.dictationItems,
   });
 
-  final Subject initialSubject;
-  final int initialGrade;
-  final ImageSource? source;
+  final List<PracticeQuestion> questions;
+  final List<DictationItem> dictationItems;
 
-  @override
-  State<DictationImportPage> createState() => _DictationImportPageState();
+  int get total => questions.length + dictationItems.length;
 }
 
-class _DictationImportPageState extends State<DictationImportPage> {
-  final _picker = ImagePicker();
-  final _rawController = TextEditingController();
-  late Subject _subject = widget.initialSubject;
-  late int _grade = widget.initialGrade;
-  bool _importing = false;
-  String? _message;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.source != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _pickAndAnalyze());
-    }
+JsonImportBundle parseStandardImportJson(String raw) {
+  final decoded = jsonDecode(raw);
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException('JSON 根节点必须是对象。');
   }
 
-  @override
-  void dispose() {
-    _rawController.dispose();
-    super.dispose();
-  }
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final questions = <PracticeQuestion>[];
+  final dictationItems = <DictationItem>[];
 
-  @override
-  Widget build(BuildContext context) {
-    final words = parseDictationText(_rawController.text);
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('导入听写本')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          PageTitle(
-            icon: widget.source == null
-                ? Icons.edit_note_outlined
-                : widget.source == ImageSource.camera
-                    ? Icons.photo_camera_outlined
-                    : Icons.photo_library_outlined,
-            title: widget.source == null
-                ? '手动录入'
-                : widget.source == ImageSource.camera
-                    ? '拍照 AI 导入'
-                    : '相册 AI 导入',
-            subtitle: 'AI 会整理词语，保存前仍可手动编辑',
-          ),
-          const SizedBox(height: 18),
-          SubjectSelector(
-            value: _subject,
-            subjects: const [Subject.chinese, Subject.english],
-            onChanged: (value) => setState(() => _subject = value),
-          ),
-          const SizedBox(height: 16),
-          GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
-          const SizedBox(height: 16),
-          if (_importing)
-            const AppPanel(
-              icon: Icons.auto_awesome_outlined,
-              title: '正在用 AI 整理',
-              child: LinearProgressIndicator(),
-            )
-          else
-            AppPanel(
-              icon: Icons.edit_note_outlined,
-              title: '识别文本',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _rawController,
-                    minLines: 8,
-                    maxLines: 14,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      hintText: '每行一个词语或单词，也可以用顿号、逗号、分号分隔。',
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('将保存 ${words.length} 个听写内容。'),
-                  if (_message != null) ...[
-                    const SizedBox(height: 8),
-                    Text(_message!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  ],
-                ],
-              ),
-            ),
-          const SizedBox(height: 16),
-          AppPanel(
-            icon: Icons.list_alt_outlined,
-            title: '保存预览',
-            child: words.isEmpty
-                ? const Text('暂无可保存内容。')
-                : Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: words.take(40).map((word) => Chip(label: Text(word))).toList(),
-                  ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _importing || widget.source == null ? null : _pickAndAnalyze,
-                  icon: const Icon(Icons.auto_awesome_outlined),
-                  label: const Text('重新 AI 导入'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: words.isEmpty || _importing ? null : () => _save(words),
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('保存'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickAndAnalyze() async {
-    setState(() {
-      _importing = true;
-      _message = null;
-    });
-
-    try {
-      final config = await LocalStore.loadAiConfig();
-      if (!config.isReady) {
-        throw const FormatException('请先到设置中填写并开启 AI API 渠道。');
+  final questionValues = decoded['questions'];
+  if (questionValues is List) {
+    for (final value in questionValues) {
+      if (value is! Map) {
+        continue;
       }
-      final image = await _picker.pickImage(source: widget.source!, imageQuality: 92);
-      if (image == null) {
-        if (mounted) {
-          setState(() {
-            _importing = false;
-            _message = '没有选择图片。';
-          });
-        }
-        return;
+      final item = Map<String, dynamic>.from(value);
+      final subject = subjectFromImportValue(item['subject'] ?? 'math');
+      if (subject == Subject.chinese) {
+        continue;
       }
-
-      final text = await AiImportService.analyzeImage(
-        config: config,
-        image: image,
-        instruction: _subject == Subject.english
-            ? '请识别图片中的小学英语$_grade年级单词或短语，整理为纯文本，每行一个英文单词或短语。不要输出中文解释，不要输出 Markdown。'
-            : '请识别图片中的小学语文$_grade年级听写词语，整理为纯文本，每行一个词语。不要输出拼音、解释、序号或 Markdown。',
+      final grade = parseImportGrade(item['grade']);
+      final question = '${item['question'] ?? ''}'.trim();
+      final answer = '${item['answer'] ?? ''}'.trim();
+      if (question.isEmpty || answer.isEmpty) {
+        continue;
+      }
+      var options = item['options'] is List
+          ? (item['options'] as List).map((option) => '$option'.trim()).where((option) => option.isNotEmpty).toList()
+          : <String>[];
+      if (options.isEmpty && shouldGenerateOptions(item, subject)) {
+        options = autoOptionsForQuestion(
+          subject: subject,
+          answer: answer,
+          seed: questions.length,
+        );
+      }
+      questions.add(
+        PracticeQuestion(
+          id: 'custom_question_${now}_${questions.length}',
+          subject: subject,
+          grade: grade,
+          question: question,
+          options: options,
+          answer: options.isEmpty ? answer : resolveOptionAnswer(answer, options),
+          explanation: '${item['explanation'] ?? '导入题目。'}',
+        ),
       );
-
-      if (mounted) {
-        setState(() {
-          _rawController.text = text;
-          _importing = false;
-          _message = text.isEmpty ? '没有识别到文字，请换一张更清晰的图片。' : null;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _importing = false;
-          _message = 'AI 导入失败：$error';
-        });
-      }
     }
   }
 
-  Future<void> _save(List<String> words) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final items = words
-        .asMap()
-        .entries
-        .map(
-          (entry) => DictationItem(
-            id: 'custom_${now}_${entry.key}',
-            subject: _subject,
-            grade: _grade,
-            text: entry.value,
-            hint: _subject == Subject.english ? '自定义英文听写' : '自定义语文听写',
-            sentence: '来自手动录入或 AI 图片导入。',
-          ),
-        )
-        .toList();
-    await LocalStore.addCustomDictation(items);
-    if (!mounted) {
-      return;
+  final dictationValues = decoded['dictation'];
+  if (dictationValues is List) {
+    for (final value in dictationValues) {
+      if (value is! Map) {
+        continue;
+      }
+      final item = Map<String, dynamic>.from(value);
+      final subject = subjectFromImportValue(item['subject'] ?? 'chinese');
+      if (subject == Subject.math) {
+        continue;
+      }
+      final grade = parseImportGrade(item['grade']);
+      final text = '${item['text'] ?? item['word'] ?? ''}'.trim();
+      if (text.isEmpty) {
+        continue;
+      }
+      dictationItems.add(
+        DictationItem(
+          id: 'custom_${now}_${dictationItems.length}',
+          subject: subject,
+          grade: grade,
+          text: text,
+          hint: '${item['hint'] ?? item['meaning'] ?? ''}'.trim(),
+          sentence: '${item['sentence'] ?? 'JSON 导入。'}',
+        ),
+      );
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已保存 ${items.length} 个听写内容。')));
-    Navigator.of(context).pop();
   }
-}
 
-List<String> parseDictationText(String text) {
-  final values = text
-      .split(RegExp(r'[\n\r,，;；、]+'))
-      .map((item) => item.trim())
-      .where((item) => item.length >= 2)
-      .toSet()
-      .toList();
-  values.sort();
-  return values;
+  final wordValues = decoded['words'];
+  if (wordValues is List) {
+    final importedWords = <({String word, String meaning, int grade})>[];
+    for (final value in wordValues) {
+      if (value is! Map) {
+        continue;
+      }
+      final item = Map<String, dynamic>.from(value);
+      final grade = parseImportGrade(item['grade']);
+      final word = '${item['word'] ?? item['text'] ?? ''}'.trim();
+      final meaning = '${item['meaning'] ?? item['hint'] ?? ''}'.trim();
+      if (word.isEmpty) {
+        continue;
+      }
+      importedWords.add((word: word, meaning: meaning, grade: grade));
+      dictationItems.add(
+        DictationItem(
+          id: 'custom_${now}_${dictationItems.length}',
+          subject: Subject.english,
+          grade: grade,
+          text: word,
+          hint: meaning,
+          sentence: 'JSON 导入英语单词。',
+        ),
+      );
+    }
+    for (var i = 0; i < importedWords.length; i++) {
+      final item = importedWords[i];
+      if (item.meaning.isEmpty) {
+        continue;
+      }
+      final importedMeanings = importedWords.map((word) => word.meaning).where((meaning) => meaning.isNotEmpty && meaning != item.meaning);
+      final options = <String>{item.meaning, ...importedMeanings, ...englishVocabulary.map((word) => word.meaning)}.take(4).toList();
+      questions.add(
+        PracticeQuestion(
+          id: 'custom_question_${now}_${questions.length}',
+          subject: Subject.english,
+          grade: item.grade,
+          question: '${item.word} 的中文意思是？',
+          options: rotateOptions(options, i),
+          answer: item.meaning,
+          explanation: '${item.word} 表示${item.meaning}。',
+        ),
+      );
+    }
+  }
+
+  return JsonImportBundle(questions: questions, dictationItems: dictationItems);
 }
 
 class QuizPage extends StatefulWidget {
@@ -2976,6 +3108,7 @@ class _QuizPageState extends State<QuizPage> {
   final _fillController = TextEditingController();
   final _startAt = DateTime.now();
   int _index = 0;
+  bool _hintLoading = false;
 
   @override
   void initState() {
@@ -3004,6 +3137,15 @@ class _QuizPageState extends State<QuizPage> {
           Text('第 ${_index + 1} 题 / 共 ${widget.questions.length} 题', style: Theme.of(context).textTheme.labelLarge),
           const SizedBox(height: 16),
           Text(question.question, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _hintLoading ? null : () => _showAiHint(question),
+              icon: const Icon(Icons.lightbulb_outline),
+              label: Text(_hintLoading ? '提示生成中' : 'AI 小提示'),
+            ),
+          ),
           const SizedBox(height: 20),
           if (question.options.isEmpty)
             TextField(
@@ -3097,6 +3239,41 @@ class _QuizPageState extends State<QuizPage> {
       );
     }).toList();
     await saveResultAndOpenPage(context, results, _startAt);
+  }
+
+  Future<void> _showAiHint(PracticeQuestion question) async {
+    setState(() => _hintLoading = true);
+    try {
+      final settings = await LocalStore.loadAiHintSettings();
+      final used = await LocalStore.loadTodayAiHintCount();
+      if (used >= settings.dailyLimit) {
+        throw FormatException('今天 AI 小提示已用完：$used / ${settings.dailyLimit}');
+      }
+      final config = await LocalStore.loadAiConfig();
+      final hint = await AiHintService.createHint(config: config, question: question);
+      await LocalStore.useAiHint();
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('AI 小提示'),
+          content: Text(hint),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('知道了')),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$error')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _hintLoading = false);
+      }
+    }
   }
 }
 
@@ -3548,6 +3725,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _tts = AppTtsService();
   late Future<AiConfig> _aiFuture = LocalStore.loadAiConfig();
   late Future<TtsApiConfig> _ttsFuture = LocalStore.loadTtsApiConfig();
+  late Future<AiHintSettings> _hintFuture = LocalStore.loadAiHintSettings();
 
   @override
   void dispose() {
@@ -3562,6 +3740,53 @@ class _SettingsPageState extends State<SettingsPage> {
       children: [
         const PageTitle(icon: Icons.settings_outlined, title: '设置', subtitle: 'TTS API 和本机数据'),
         const SizedBox(height: 16),
+        AppPanel(
+          icon: Icons.data_object_outlined,
+          title: 'JSON 题库导入',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('用标准 JSON 增量导入数学题、英语题、英语单词、语文和英语听写词。'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: _openJsonImport,
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: const Text('导入 JSON'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await LocalStore.clearCustomQuestions();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已清空自定义题库。')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('清空题库'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await LocalStore.clearCustomDictation();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已清空自定义词库。')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    label: const Text('清空词库'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
         FutureBuilder<TtsApiConfig>(
           future: _ttsFuture,
           builder: (context, snapshot) {
@@ -3606,12 +3831,35 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(config.isReady ? '已开启：${config.model}' : '未开启。可用于拍照整理题库和听写词。'),
+                  Text(config.isReady ? '已开启：${config.model}' : '未开启。可用于练习页 AI 小提示。'),
                   const SizedBox(height: 12),
                   FilledButton.tonalIcon(
                     onPressed: _openAiSettings,
                     icon: const Icon(Icons.tune_outlined),
                     label: const Text('配置 AI'),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        FutureBuilder<AiHintSettings>(
+          future: _hintFuture,
+          builder: (context, snapshot) {
+            final settings = snapshot.data ?? AiHintSettings.defaults;
+            return AppPanel(
+              icon: Icons.lightbulb_outline,
+              title: 'AI 小提示次数',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('每天最多使用 ${settings.dailyLimit} 次。修改需要管理密码。'),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _openHintSettings,
+                    icon: const Icon(Icons.lock_outline),
+                    label: const Text('设置次数'),
                   ),
                 ],
               ),
@@ -3654,11 +3902,236 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _openJsonImport() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const JsonImportPage()));
+  }
+
+  Future<void> _openHintSettings() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AiHintSettingsPage()));
+    if (mounted) {
+      setState(() => _hintFuture = LocalStore.loadAiHintSettings());
+    }
+  }
+
   Future<void> _openTtsApiSettings() async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TtsApiSettingsPage()));
     if (mounted) {
       setState(() => _ttsFuture = LocalStore.loadTtsApiConfig());
     }
+  }
+}
+
+class JsonImportPage extends StatefulWidget {
+  const JsonImportPage({super.key});
+
+  @override
+  State<JsonImportPage> createState() => _JsonImportPageState();
+}
+
+class _JsonImportPageState extends State<JsonImportPage> {
+  final _controller = TextEditingController();
+  JsonImportBundle? _bundle;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.text = standardJsonExample;
+    _parse();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bundle = _bundle;
+    return Scaffold(
+      appBar: AppBar(title: const Text('导入 JSON')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const PageTitle(icon: Icons.data_object_outlined, title: '标准 JSON 导入', subtitle: '粘贴 JSON，预览无误后保存到本机题库'),
+          const SizedBox(height: 16),
+          AppPanel(
+            icon: Icons.rule_outlined,
+            title: '可导入内容',
+            child: const Text('questions：数学/英语练习题；dictation：语文/英语听写词；words：英语单词，会自动加入背单词、听写和英语练习。'),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            minLines: 14,
+            maxLines: 24,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'JSON 内容',
+            ),
+            onChanged: (_) => _parse(),
+          ),
+          const SizedBox(height: 12),
+          AppPanel(
+            icon: Icons.fact_check_outlined,
+            title: '导入预览',
+            child: Text(
+              bundle == null
+                  ? (_message ?? 'JSON 无法解析。')
+                  : '练习题 ${bundle.questions.length} 道，听写/单词 ${bundle.dictationItems.length} 个。',
+              style: _message == null ? null : TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: bundle == null || bundle.total == 0 ? null : _save,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('保存到本机'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _parse() {
+    try {
+      final parsed = parseStandardImportJson(_controller.text);
+      setState(() {
+        _bundle = parsed;
+        _message = null;
+      });
+    } catch (error) {
+      setState(() {
+        _bundle = null;
+        _message = '$error';
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    final bundle = _bundle;
+    if (bundle == null) {
+      return;
+    }
+    await LocalStore.addCustomQuestions(bundle.questions);
+    await LocalStore.addCustomDictation(bundle.dictationItems);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已导入 ${bundle.questions.length} 道题、${bundle.dictationItems.length} 个词。')),
+    );
+    Navigator.of(context).pop();
+  }
+}
+
+const standardJsonExample = '''
+{
+  "version": 1,
+  "questions": [
+    {
+      "subject": "math",
+      "grade": 1,
+      "type": "calculation",
+      "question": "8 + 7 = ?",
+      "answer": "15",
+      "explanation": "8 加 7 等于 15。"
+    },
+    {
+      "subject": "math",
+      "grade": 1,
+      "type": "word_problem",
+      "question": "小明有 9 个苹果，送给同学 3 个，还剩几个？",
+      "answer": "6",
+      "explanation": "用 9 - 3 计算。"
+    }
+  ],
+  "dictation": [
+    {"subject": "chinese", "grade": 1, "text": "春天"},
+    {"subject": "english", "grade": 2, "text": "school", "hint": "学校"}
+  ],
+  "words": [
+    {"grade": 1, "word": "apple", "meaning": "苹果", "partOfSpeech": "n."}
+  ]
+}
+''';
+
+class AiHintSettingsPage extends StatefulWidget {
+  const AiHintSettingsPage({super.key});
+
+  @override
+  State<AiHintSettingsPage> createState() => _AiHintSettingsPageState();
+}
+
+class _AiHintSettingsPageState extends State<AiHintSettingsPage> {
+  final _password = TextEditingController();
+  final _dailyLimit = TextEditingController(text: '3');
+
+  @override
+  void initState() {
+    super.initState();
+    LocalStore.loadAiHintSettings().then((settings) {
+      if (!mounted) {
+        return;
+      }
+      _dailyLimit.text = settings.dailyLimit.toString();
+    });
+  }
+
+  @override
+  void dispose() {
+    _password.dispose();
+    _dailyLimit.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('AI 小提示次数')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const PageTitle(icon: Icons.lightbulb_outline, title: '每日次数设置', subtitle: '需要管理密码才能修改'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _password,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: '管理密码', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _dailyLimit,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '每天可用次数', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: _save,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _save() async {
+    if (_password.text.trim() != '200772') {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('密码不正确。')));
+      return;
+    }
+    final limit = int.tryParse(_dailyLimit.text.trim());
+    if (limit == null || limit < 0 || limit > 99) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('次数需要是 0 到 99 的数字。')));
+      return;
+    }
+    await LocalStore.saveAiHintSettings(AiHintSettings(dailyLimit: limit));
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
   }
 }
 
@@ -3709,8 +4182,8 @@ class _AiSettingsPageState extends State<AiSettingsPage> {
           SwitchListTile(
             value: _enabled,
             onChanged: (value) => setState(() => _enabled = value),
-            title: const Text('启用 AI 图片导入'),
-            subtitle: const Text('开启后，选择的图片会发送到你配置的 AI API。'),
+            title: const Text('启用 AI 小提示'),
+            subtitle: const Text('开启后，练习页可调用你配置的 AI API 生成解题提示。'),
           ),
           const SizedBox(height: 12),
           TextField(controller: _baseUrl, decoration: const InputDecoration(labelText: 'Base URL', border: OutlineInputBorder())),
