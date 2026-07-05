@@ -58,17 +58,23 @@ jobs:
             sed -i 's/targetSdkVersion flutter.targetSdkVersion/targetSdkVersion 36/' android/app/build.gradle
           fi
 
-      - name: Add Chinese OCR dependency
+      - name: Add ML Kit OCR dependencies
         run: |
           if [ -f android/app/build.gradle.kts ]; then
-            printf '\n%s\n%s\n%s\n' \
+            printf '\n%s\n%s\n%s\n%s\n%s\n%s\n' \
               'dependencies {' \
+              '    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")' \
               '    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")' \
+              '    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")' \
+              '    implementation("com.google.mlkit:text-recognition-korean:16.0.1")' \
               '}' >> android/app/build.gradle.kts
           else
-            printf '\n%s\n%s\n%s\n' \
+            printf '\n%s\n%s\n%s\n%s\n%s\n%s\n' \
               'dependencies {' \
+              "    implementation 'com.google.mlkit:text-recognition-devanagari:16.0.1'" \
               "    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'" \
+              "    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'" \
+              "    implementation 'com.google.mlkit:text-recognition-korean:16.0.1'" \
               '}' >> android/app/build.gradle
           fi
 
