@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -295,6 +299,59 @@ class PracticeRecord {
   }
 }
 
+class RewardProfile {
+  const RewardProfile({
+    required this.points,
+    required this.completed,
+    required this.perfect,
+    required this.streak,
+    required this.lastStudyDate,
+  });
+
+  final int points;
+  final int completed;
+  final int perfect;
+  final int streak;
+  final String lastStudyDate;
+
+  int get level => points ~/ 100 + 1;
+  int get currentLevelPoints => points % 100;
+  String get title {
+    if (level >= 10) {
+      return '学习大师';
+    }
+    if (level >= 6) {
+      return '闯关高手';
+    }
+    if (level >= 3) {
+      return '进步之星';
+    }
+    return '学习新星';
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'points': points,
+      'completed': completed,
+      'perfect': perfect,
+      'streak': streak,
+      'lastStudyDate': lastStudyDate,
+    };
+  }
+
+  factory RewardProfile.fromJson(Map<String, Object?> json) {
+    return RewardProfile(
+      points: json['points'] as int? ?? 0,
+      completed: json['completed'] as int? ?? 0,
+      perfect: json['perfect'] as int? ?? 0,
+      streak: json['streak'] as int? ?? 0,
+      lastStudyDate: json['lastStudyDate'] as String? ?? '',
+    );
+  }
+
+  static const empty = RewardProfile(points: 0, completed: 0, perfect: 0, streak: 0, lastStudyDate: '');
+}
+
 class ResultItem {
   const ResultItem({
     required this.sourceId,
@@ -319,11 +376,106 @@ class ResultItem {
   final bool isCorrect;
 }
 
+class AiConfig {
+  const AiConfig({
+    required this.enabled,
+    required this.baseUrl,
+    required this.apiKey,
+    required this.model,
+  });
+
+  final bool enabled;
+  final String baseUrl;
+  final String apiKey;
+  final String model;
+
+  bool get isReady => enabled && baseUrl.trim().isNotEmpty && apiKey.trim().isNotEmpty && model.trim().isNotEmpty;
+
+  Map<String, Object?> toJson() {
+    return {
+      'enabled': enabled,
+      'baseUrl': baseUrl,
+      'apiKey': apiKey,
+      'model': model,
+    };
+  }
+
+  factory AiConfig.fromJson(Map<String, Object?> json) {
+    return AiConfig(
+      enabled: json['enabled'] as bool? ?? false,
+      baseUrl: json['baseUrl'] as String? ?? 'https://api.openai.com/v1',
+      apiKey: json['apiKey'] as String? ?? '',
+      model: json['model'] as String? ?? 'gpt-4.1-mini',
+    );
+  }
+
+  static const empty = AiConfig(
+    enabled: false,
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: '',
+    model: 'gpt-4.1-mini',
+  );
+}
+
+class TtsApiConfig {
+  const TtsApiConfig({
+    required this.enabled,
+    required this.baseUrl,
+    required this.apiKey,
+    required this.model,
+    required this.voice,
+  });
+
+  final bool enabled;
+  final String baseUrl;
+  final String apiKey;
+  final String model;
+  final String voice;
+
+  bool get isReady =>
+      enabled &&
+      baseUrl.trim().isNotEmpty &&
+      apiKey.trim().isNotEmpty &&
+      model.trim().isNotEmpty &&
+      voice.trim().isNotEmpty;
+
+  Map<String, Object?> toJson() {
+    return {
+      'enabled': enabled,
+      'baseUrl': baseUrl,
+      'apiKey': apiKey,
+      'model': model,
+      'voice': voice,
+    };
+  }
+
+  factory TtsApiConfig.fromJson(Map<String, Object?> json) {
+    return TtsApiConfig(
+      enabled: json['enabled'] as bool? ?? false,
+      baseUrl: json['baseUrl'] as String? ?? 'https://api.openai.com/v1',
+      apiKey: json['apiKey'] as String? ?? '',
+      model: json['model'] as String? ?? 'gpt-4o-mini-tts',
+      voice: json['voice'] as String? ?? 'alloy',
+    );
+  }
+
+  static const empty = TtsApiConfig(
+    enabled: false,
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: '',
+    model: 'gpt-4o-mini-tts',
+    voice: 'alloy',
+  );
+}
+
 class LocalStore {
   static const _mistakesKey = 'xuebao_mistakes';
   static const _recordsKey = 'xuebao_records';
   static const _customQuestionsKey = 'xuebao_custom_questions';
   static const _customDictationKey = 'xuebao_custom_dictation';
+  static const _aiConfigKey = 'xuebao_ai_config';
+  static const _ttsApiConfigKey = 'xuebao_tts_api_config';
+  static const _rewardKey = 'xuebao_rewards';
 
   static Future<List<MistakeEntry>> loadMistakes() async {
     final prefs = await SharedPreferences.getInstance();
@@ -428,6 +580,65 @@ class LocalStore {
     await prefs.remove(_customDictationKey);
   }
 
+  static Future<AiConfig> loadAiConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_aiConfigKey);
+    if (raw == null || raw.isEmpty) {
+      return AiConfig.empty;
+    }
+    return AiConfig.fromJson(Map<String, Object?>.from(jsonDecode(raw) as Map));
+  }
+
+  static Future<void> saveAiConfig(AiConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_aiConfigKey, jsonEncode(config.toJson()));
+  }
+
+  static Future<TtsApiConfig> loadTtsApiConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_ttsApiConfigKey);
+    if (raw == null || raw.isEmpty) {
+      return TtsApiConfig.empty;
+    }
+    return TtsApiConfig.fromJson(Map<String, Object?>.from(jsonDecode(raw) as Map));
+  }
+
+  static Future<void> saveTtsApiConfig(TtsApiConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_ttsApiConfigKey, jsonEncode(config.toJson()));
+  }
+
+  static Future<RewardProfile> loadRewards() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_rewardKey);
+    if (raw == null || raw.isEmpty) {
+      return RewardProfile.empty;
+    }
+    return RewardProfile.fromJson(Map<String, Object?>.from(jsonDecode(raw) as Map));
+  }
+
+  static Future<RewardProfile> addReward({required int score, required int total}) async {
+    final current = await loadRewards();
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final yesterday = DateTime.now().subtract(const Duration(days: 1)).toIso8601String().substring(0, 10);
+    final nextStreak = current.lastStudyDate == today
+        ? current.streak
+        : current.lastStudyDate == yesterday
+            ? current.streak + 1
+            : 1;
+    final earned = 10 + (score ~/ 10) + (total >= 10 ? 5 : 0) + (score == 100 ? 15 : 0);
+    final next = RewardProfile(
+      points: current.points + earned,
+      completed: current.completed + 1,
+      perfect: current.perfect + (score == 100 ? 1 : 0),
+      streak: nextStreak,
+      lastStudyDate: today,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_rewardKey, jsonEncode(next.toJson()));
+    return next;
+  }
+
   static Future<List<PracticeRecord>> loadRecords() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_recordsKey);
@@ -452,6 +663,182 @@ class LocalStore {
   }
 }
 
+class AiImportService {
+  static Future<String> analyzeImage({
+    required AiConfig config,
+    required XFile image,
+    required String instruction,
+  }) async {
+    if (!config.isReady) {
+      throw const FormatException('请先在设置中开启并填写 AI API 渠道。');
+    }
+
+    final bytes = await File(image.path).readAsBytes();
+    final imageBase64 = base64Encode(bytes);
+    final endpoint = Uri.parse('${config.baseUrl.replaceAll(RegExp(r'/+$'), '')}/chat/completions');
+    final response = await http
+        .post(
+          endpoint,
+          headers: {
+            'Authorization': 'Bearer ${config.apiKey}',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': config.model,
+            'messages': [
+              {
+                'role': 'user',
+                'content': [
+                  {'type': 'text', 'text': instruction},
+                  {
+                    'type': 'image_url',
+                    'image_url': {'url': 'data:image/jpeg;base64,$imageBase64'},
+                  },
+                ],
+              },
+            ],
+            'temperature': 0.1,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw FormatException('AI 接口返回 ${response.statusCode}：${response.body}');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final choices = data['choices'] as List<dynamic>?;
+    if (choices == null || choices.isEmpty) {
+      throw const FormatException('AI 接口没有返回可用内容。');
+    }
+    final message = choices.first['message'] as Map<String, dynamic>?;
+    final content = message?['content'];
+    if (content is String) {
+      return stripCodeFence(content).trim();
+    }
+    if (content is List) {
+      return content
+          .map((item) => item is Map && item['text'] is String ? item['text'] as String : '')
+          .where((text) => text.trim().isNotEmpty)
+          .join('\n')
+          .trim();
+    }
+    throw const FormatException('AI 返回格式无法解析。');
+  }
+}
+
+class AppTtsService {
+  AppTtsService();
+
+  final _systemTts = FlutterTts();
+  final _apiPlayer = AudioPlayer();
+  bool _disposed = false;
+
+  Future<void> speak({
+    required String text,
+    required String language,
+    required bool slow,
+  }) async {
+    if (_disposed) {
+      return;
+    }
+
+    await stop();
+    Object? systemError;
+    try {
+      await _speakWithSystemTts(text: text, language: language, slow: slow);
+      return;
+    } catch (error) {
+      systemError = error;
+    }
+
+    final config = await LocalStore.loadTtsApiConfig();
+    if (!config.isReady) {
+      throw FormatException(
+        '手机自带 TTS 无法朗读。请到设置里启用并填写 OpenAI 格式 TTS API。'
+        '${systemError == null ? '' : '\n手机自带 TTS 错误：$systemError'}',
+      );
+    }
+    await _speakWithApi(config: config, text: text, slow: slow);
+  }
+
+  Future<void> stop() async {
+    await _systemTts.stop();
+    await _apiPlayer.stop();
+  }
+
+  Future<void> speakWithApiOnly({
+    required TtsApiConfig config,
+    required String text,
+    required bool slow,
+  }) async {
+    await stop();
+    if (!config.isReady) {
+      throw const FormatException('请先启用并填写完整的 TTS API 配置。');
+    }
+    await _speakWithApi(config: config, text: text, slow: slow);
+  }
+
+  void dispose() {
+    _disposed = true;
+    unawaited(_systemTts.stop());
+    unawaited(_apiPlayer.dispose());
+  }
+
+  Future<void> _speakWithSystemTts({
+    required String text,
+    required String language,
+    required bool slow,
+  }) async {
+    await _systemTts.awaitSpeakCompletion(true);
+    await _systemTts.setLanguage(language);
+    await _systemTts.setSpeechRate(slow ? 0.35 : 0.48);
+    await _systemTts.setPitch(1);
+    final result = await _systemTts.speak(text);
+    if (result is int && result == 0) {
+      throw const FormatException('手机自带 TTS 返回失败。');
+    }
+  }
+
+  Future<void> _speakWithApi({
+    required TtsApiConfig config,
+    required String text,
+    required bool slow,
+  }) async {
+    final endpoint = Uri.parse('${config.baseUrl.replaceAll(RegExp(r'/+$'), '')}/audio/speech');
+    final response = await http
+        .post(
+          endpoint,
+          headers: {
+            'Authorization': 'Bearer ${config.apiKey}',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': config.model,
+            'voice': config.voice,
+            'input': text,
+            'response_format': 'mp3',
+            'speed': slow ? 0.85 : 1.0,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw FormatException('TTS API 返回 ${response.statusCode}：${response.body}');
+    }
+
+    final completed = _apiPlayer.onPlayerComplete.first;
+    await _apiPlayer.play(BytesSource(response.bodyBytes));
+    await completed.timeout(Duration(seconds: max(15, text.length * 3)));
+  }
+}
+
+String stripCodeFence(String text) {
+  return text
+      .replaceAll(RegExp(r'^\s*```(?:text|json|csv)?\s*', multiLine: false), '')
+      .replaceAll(RegExp(r'\s*```\s*$', multiLine: false), '');
+}
+
 String normalizeAnswer(String value, Subject subject) {
   var normalized = value.trim().replaceAll(RegExp(r'\s+'), '');
   normalized = normalized.replaceAll(RegExp(r'[，。！？,.!?]'), '');
@@ -470,165 +857,93 @@ String formatDuration(int seconds) {
   return '$minutes 分 $remain 秒';
 }
 
-const questionBank = <PracticeQuestion>[
-  PracticeQuestion(
-    id: 'math_1_001',
-    subject: Subject.math,
-    grade: 1,
-    question: '3 + 5 = ?',
-    options: ['6', '7', '8', '9'],
-    answer: '8',
-    explanation: '3 加 5 等于 8。',
-  ),
-  PracticeQuestion(
-    id: 'math_1_002',
-    subject: Subject.math,
-    grade: 1,
-    question: '10 - 4 = ?',
-    options: ['5', '6', '7', '8'],
-    answer: '6',
-    explanation: '10 减 4 等于 6。',
-  ),
-  PracticeQuestion(
-    id: 'math_2_001',
-    subject: Subject.math,
-    grade: 2,
-    question: '4 × 3 = ?',
-    options: ['7', '10', '12', '14'],
-    answer: '12',
-    explanation: '4 个 3 相加是 12。',
-  ),
-  PracticeQuestion(
-    id: 'math_3_001',
-    subject: Subject.math,
-    grade: 3,
-    question: '36 ÷ 6 = ?',
-    options: ['4', '5', '6', '7'],
-    answer: '6',
-    explanation: '6 乘 6 等于 36，所以 36 除以 6 等于 6。',
-  ),
-  PracticeQuestion(
-    id: 'chinese_1_001',
-    subject: Subject.chinese,
-    grade: 1,
-    question: '“日”字共有几画？',
-    options: ['3 画', '4 画', '5 画', '6 画'],
-    answer: '4 画',
-    explanation: '“日”字共有 4 画。',
-  ),
-  PracticeQuestion(
-    id: 'chinese_2_001',
-    subject: Subject.chinese,
-    grade: 2,
-    question: '下面哪个词语表示颜色？',
-    options: ['明亮', '红色', '认真', '跑步'],
-    answer: '红色',
-    explanation: '“红色”表示颜色。',
-  ),
-  PracticeQuestion(
-    id: 'chinese_3_001',
-    subject: Subject.chinese,
-    grade: 3,
-    question: '“专心致志”的意思更接近哪一项？',
-    options: ['非常认真', '跑得很快', '声音很大', '天气很好'],
-    answer: '非常认真',
-    explanation: '“专心致志”表示一心一意，注意力很集中。',
-  ),
-  PracticeQuestion(
-    id: 'english_1_001',
-    subject: Subject.english,
-    grade: 1,
-    question: 'apple 的中文意思是？',
-    options: ['苹果', '书包', '小猫', '铅笔'],
-    answer: '苹果',
-    explanation: 'apple 表示苹果。',
-  ),
-  PracticeQuestion(
-    id: 'english_2_001',
-    subject: Subject.english,
-    grade: 2,
-    question: '选择 “狗” 的英文。',
-    options: ['cat', 'dog', 'book', 'desk'],
-    answer: 'dog',
-    explanation: 'dog 表示狗。',
-  ),
-  PracticeQuestion(
-    id: 'english_3_001',
-    subject: Subject.english,
-    grade: 3,
-    question: 'I like milk. 这句话的意思是？',
-    options: ['我喜欢牛奶。', '我有一本书。', '他喜欢苹果。', '这是我的尺子。'],
-    answer: '我喜欢牛奶。',
-    explanation: 'like 表示喜欢，milk 表示牛奶。',
-  ),
-];
+final questionBank = buildQuestionBank();
+final dictationBank = buildDictationBank();
 
-const dictationBank = <DictationItem>[
-  DictationItem(
-    id: 'dict_cn_1_001',
-    subject: Subject.chinese,
-    grade: 1,
-    text: '春天',
-    hint: '季节',
-    sentence: '春天来了，花儿开了。',
-  ),
-  DictationItem(
-    id: 'dict_cn_1_002',
-    subject: Subject.chinese,
-    grade: 1,
-    text: '朋友',
-    hint: '一起学习和玩耍的人',
-    sentence: '我和朋友一起读书。',
-  ),
-  DictationItem(
-    id: 'dict_cn_2_001',
-    subject: Subject.chinese,
-    grade: 2,
-    text: '明亮',
-    hint: '光线充足',
-    sentence: '教室里的灯很明亮。',
-  ),
-  DictationItem(
-    id: 'dict_cn_3_001',
-    subject: Subject.chinese,
-    grade: 3,
-    text: '认真',
-    hint: '学习态度',
-    sentence: '她认真地完成作业。',
-  ),
-  DictationItem(
-    id: 'dict_en_1_001',
-    subject: Subject.english,
-    grade: 1,
-    text: 'apple',
-    hint: '苹果',
-    sentence: 'I have an apple.',
-  ),
-  DictationItem(
-    id: 'dict_en_1_002',
-    subject: Subject.english,
-    grade: 1,
-    text: 'book',
-    hint: '书',
-    sentence: 'This is my book.',
-  ),
-  DictationItem(
-    id: 'dict_en_2_001',
-    subject: Subject.english,
-    grade: 2,
-    text: 'school',
-    hint: '学校',
-    sentence: 'I go to school.',
-  ),
-  DictationItem(
-    id: 'dict_en_3_001',
-    subject: Subject.english,
-    grade: 3,
-    text: 'family',
-    hint: '家庭',
-    sentence: 'I love my family.',
-  ),
-];
+const chineseWordsByGrade = <int, List<String>>{
+  1: ['天空', '太阳', '月亮', '白云', '小鸟', '大山', '河水', '花朵', '朋友', '同学', '老师', '书包', '铅笔', '认真', '快乐', '春天', '秋天', '上学', '写字', '读书'],
+  2: ['明亮', '温暖', '勇敢', '仔细', '城市', '乡村', '森林', '草原', '海洋', '故事', '办法', '时候', '方向', '礼物', '教室', '操场', '希望', '幸福', '已经', '容易'],
+  3: ['观察', '准备', '旅行', '诚实', '鼓励', '继续', '安静', '热闹', '漂亮', '奇妙', '忽然', '仍然', '愿望', '丰富', '保护', '节约', '整齐', '危险', '著名', '特别'],
+  4: ['宽阔', '敏捷', '均匀', '规律', '痕迹', '幻想', '改善', '探索', '凝视', '舒适', '联系', '判断', '解释', '欣赏', '尊重', '坚强', '熟悉', '陌生', '创造', '责任'],
+  5: ['清晰', '协调', '谨慎', '奉献', '启发', '实践', '比较', '控制', '效率', '资料', '范围', '推测', '准确', '平衡', '维护', '独立', '珍惜', '普通', '灿烂', '辽阔'],
+  6: ['徘徊', '严峻', '领域', '贡献', '诞生', '锻炼', '毅力', '目标', '抉择', '荣誉', '挫折', '真理', '信念', '陶醉', '慷慨', '渺小', '浏览', '抵御', '沉着', '卓越'],
+};
+
+const englishWordsByGrade = <int, Map<String, String>>{
+  1: {'apple': '苹果', 'book': '书', 'cat': '猫', 'dog': '狗', 'pen': '钢笔', 'bag': '书包', 'red': '红色', 'blue': '蓝色', 'one': '一', 'two': '二'},
+  2: {'school': '学校', 'teacher': '老师', 'student': '学生', 'family': '家庭', 'father': '爸爸', 'mother': '妈妈', 'water': '水', 'milk': '牛奶', 'happy': '高兴的', 'small': '小的'},
+  3: {'window': '窗户', 'picture': '图片', 'friend': '朋友', 'orange': '橙子', 'banana': '香蕉', 'morning': '早晨', 'evening': '傍晚', 'listen': '听', 'speak': '说', 'write': '写'},
+  4: {'library': '图书馆', 'weather': '天气', 'because': '因为', 'before': '在以前', 'after': '在以后', 'usually': '通常', 'lesson': '课程', 'animal': '动物', 'vegetable': '蔬菜', 'computer': '电脑'},
+  5: {'exercise': '锻炼', 'holiday': '假期', 'country': '国家', 'healthy': '健康的', 'important': '重要的', 'interesting': '有趣的', 'different': '不同的', 'question': '问题', 'answer': '答案', 'minute': '分钟'},
+  6: {'language': '语言', 'science': '科学', 'history': '历史', 'future': '未来', 'project': '项目', 'example': '例子', 'practice': '练习', 'careful': '仔细的', 'successful': '成功的', 'wonderful': '精彩的'},
+};
+
+List<DictationItem> buildDictationBank() {
+  final items = <DictationItem>[];
+  chineseWordsByGrade.forEach((grade, words) {
+    for (var i = 0; i < words.length; i++) {
+      items.add(DictationItem(id: 'cn_${grade}_$i', subject: Subject.chinese, grade: grade, text: words[i], hint: '', sentence: '语文常用词。'));
+    }
+  });
+  englishWordsByGrade.forEach((grade, words) {
+    var i = 0;
+    words.forEach((word, hint) {
+      items.add(DictationItem(id: 'en_${grade}_${i++}', subject: Subject.english, grade: grade, text: word, hint: hint, sentence: hint));
+    });
+  });
+  return items;
+}
+
+List<PracticeQuestion> buildQuestionBank() {
+  final questions = <PracticeQuestion>[];
+  for (var grade = 1; grade <= 6; grade++) {
+    for (var i = 1; i <= 70; i++) {
+      final a = grade * 3 + i;
+      final b = grade + i % 9 + 1;
+      final answer = grade <= 2 ? a + b : (i.isEven ? a * b : a + b * grade);
+      final expression = grade <= 2 ? '$a + $b' : (i.isEven ? '$a × $b' : '$a + $b × $grade');
+      questions.add(PracticeQuestion(
+        id: 'math_${grade}_$i',
+        subject: Subject.math,
+        grade: grade,
+        question: '$expression = ?',
+        options: makeNumberOptions(answer),
+        answer: '$answer',
+        explanation: '按运算顺序计算 $expression。',
+      ));
+    }
+    final cnWords = chineseWordsByGrade[grade]!;
+    for (var i = 0; i < 70; i++) {
+      final word = cnWords[i % cnWords.length];
+      final options = <String>[];
+      for (var offset = 0; offset < 4; offset++) {
+        options.add(cnWords[(i + offset) % cnWords.length]);
+      }
+      while (options.length < 4) {
+        options.add(cnWords[(options.length + i + 3) % cnWords.length]);
+      }
+      questions.add(PracticeQuestion(id: 'chinese_${grade}_$i', subject: Subject.chinese, grade: grade, question: '下面哪个词语适合听写复习？', options: options, answer: word, explanation: '$word 是 $grade 年级常用词。'));
+    }
+    final enWords = englishWordsByGrade[grade]!;
+    final entries = enWords.entries.toList();
+    for (var i = 0; i < 70; i++) {
+      final entry = entries[i % entries.length];
+      questions.add(PracticeQuestion(id: 'english_${grade}_$i', subject: Subject.english, grade: grade, question: '${entry.key} 的中文意思是？', options: makeMeaningOptions(entry.value), answer: entry.value, explanation: '${entry.key} 表示${entry.value}。'));
+    }
+  }
+  return questions;
+}
+
+List<String> makeNumberOptions(int answer) {
+  final values = <int>{answer, answer + 1, answer + 3, max(0, answer - 2)}.toList()..sort();
+  return values.map((value) => '$value').toList();
+}
+
+List<String> makeMeaningOptions(String answer) {
+  final pool = ['苹果', '书', '学校', '老师', '家庭', '天气', '问题', '答案', '科学', '未来'];
+  final values = <String>{answer, ...pool.where((item) => item != answer).take(3)};
+  return values.take(4).toList();
+}
 
 class XueBaoShell extends StatefulWidget {
   const XueBaoShell({super.key});
@@ -646,6 +961,7 @@ class _XueBaoShellState extends State<XueBaoShell> {
       const HomePage(),
       const PracticeEntryPage(),
       const DictationEntryPage(),
+      const GamesPage(),
       const MistakesPage(),
       const SettingsPage(),
     ];
@@ -672,6 +988,11 @@ class _XueBaoShellState extends State<XueBaoShell> {
             label: '听写',
           ),
           NavigationDestination(
+            icon: Icon(Icons.sports_esports_outlined),
+            selectedIcon: Icon(Icons.sports_esports),
+            label: '游戏',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.error_outline),
             selectedIcon: Icon(Icons.error),
             label: '错题',
@@ -695,11 +1016,36 @@ class HomePage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Image.asset('assets/images/cover.png', height: 210, fit: BoxFit.cover),
+        ),
+        const SizedBox(height: 18),
         Text('学宝', style: Theme.of(context).textTheme.headlineLarge?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-        Text('本地练习、本地听写、本机保存', style: Theme.of(context).textTheme.bodyLarge),
+        Text('练习、听写、闯关和本机题库', style: Theme.of(context).textTheme.bodyLarge),
         const SizedBox(height: 24),
+        FutureBuilder<RewardProfile>(
+          future: LocalStore.loadRewards(),
+          builder: (context, snapshot) {
+            final rewards = snapshot.data ?? RewardProfile.empty;
+            return AppPanel(
+              icon: Icons.workspace_premium_outlined,
+              title: '学习成长',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${rewards.title}  等级 ${rewards.level}'),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(value: rewards.currentLevelPoints / 100),
+                  const SizedBox(height: 8),
+                  Text('积分 ${rewards.points}，连续学习 ${rewards.streak} 天，满分 ${rewards.perfect} 次'),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 16),
         GridView.count(
           crossAxisCount: 3,
           shrinkWrap: true,
@@ -807,7 +1153,7 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('可以拍照或从相册选择题目，OCR 后编辑确认，再保存到本机题库。'),
+                      const Text('可以手动输入题目，也可以用已配置的 AI API 识别图片并整理成题库格式。'),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 10,
@@ -816,12 +1162,17 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
                           FilledButton.tonalIcon(
                             onPressed: () => _openQuestionImport(ImageSource.camera),
                             icon: const Icon(Icons.photo_camera_outlined),
-                            label: const Text('拍照识别'),
+                            label: const Text('拍照 AI 导入'),
                           ),
                           FilledButton.tonalIcon(
                             onPressed: () => _openQuestionImport(ImageSource.gallery),
                             icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('相册识别'),
+                            label: const Text('相册 AI 导入'),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: () => _openQuestionImport(null),
+                            icon: const Icon(Icons.edit_note_outlined),
+                            label: const Text('手动录入'),
                           ),
                           OutlinedButton.icon(
                             onPressed: custom.isEmpty
@@ -869,10 +1220,10 @@ class _PracticeEntryPageState extends State<PracticeEntryPage> {
     ].where((item) => item.subject == _subject && item.grade == _grade).toList();
   }
 
-  Future<void> _openQuestionImport(ImageSource source) async {
+  Future<void> _openQuestionImport(ImageSource? source) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => OcrQuestionImportPage(
+        builder: (_) => QuestionImportPage(
           initialSubject: _subject,
           initialGrade: _grade,
           source: source,
@@ -892,9 +1243,65 @@ class DictationEntryPage extends StatefulWidget {
   State<DictationEntryPage> createState() => _DictationEntryPageState();
 }
 
+class GamesPage extends StatefulWidget {
+  const GamesPage({super.key});
+
+  @override
+  State<GamesPage> createState() => _GamesPageState();
+}
+
+class _GamesPageState extends State<GamesPage> {
+  Subject _subject = Subject.math;
+  int _grade = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    final questions = questionBank.where((item) => item.subject == _subject && item.grade == _grade).toList();
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const PageTitle(icon: Icons.sports_esports_outlined, title: '学习游戏', subtitle: '从题库抽题闯关，完成后获得积分'),
+        const SizedBox(height: 20),
+        SubjectSelector(value: _subject, onChanged: (value) => setState(() => _subject = value)),
+        const SizedBox(height: 18),
+        GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
+        const SizedBox(height: 18),
+        AppPanel(
+          icon: Icons.bolt_outlined,
+          title: '快速闯关',
+          child: Text('从 ${questions.length} 道题中抽取 10 道。答对越多，积分越高。'),
+        ),
+        const SizedBox(height: 12),
+        AppPanel(
+          icon: Icons.military_tech_outlined,
+          title: '满分挑战',
+          child: const Text('目标是 10 道全对，满分会额外增加奖励积分。'),
+        ),
+        const SizedBox(height: 22),
+        FilledButton.icon(
+          onPressed: questions.isEmpty
+              ? null
+              : () {
+                  final picked = [...questions]..shuffle(Random());
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => QuizPage(subject: _subject, grade: _grade, questions: picked.take(10).toList()),
+                    ),
+                  );
+                },
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('开始闯关'),
+        ),
+      ],
+    );
+  }
+}
+
 class _DictationEntryPageState extends State<DictationEntryPage> {
   Subject _subject = Subject.chinese;
   int _grade = 1;
+  int _autoNextSeconds = 0;
+  int _itemCount = 10;
   late Future<List<DictationItem>> _customFuture = LocalStore.loadCustomDictation();
 
   @override
@@ -902,7 +1309,7 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const PageTitle(icon: Icons.record_voice_over_outlined, title: '听写训练', subtitle: '使用手机系统 TTS 朗读'),
+        const PageTitle(icon: Icons.record_voice_over_outlined, title: '听写训练', subtitle: '使用手机自带 TTS 朗读'),
         const SizedBox(height: 20),
         SubjectSelector(
           value: _subject,
@@ -912,11 +1319,47 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
         const SizedBox(height: 18),
         GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
         const SizedBox(height: 18),
+        AppPanel(
+          icon: Icons.timer_outlined,
+          title: '听写设置',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('数量'),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 5, label: Text('5个')),
+                  ButtonSegment(value: 10, label: Text('10个')),
+                  ButtonSegment(value: 15, label: Text('15个')),
+                  ButtonSegment(value: 20, label: Text('20个')),
+                ],
+                selected: {_itemCount},
+                onSelectionChanged: (selection) => setState(() => _itemCount = selection.first),
+              ),
+              const SizedBox(height: 14),
+              const Text('自动下一个'),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('手动')),
+                  ButtonSegment(value: 8, label: Text('8秒')),
+                  ButtonSegment(value: 12, label: Text('12秒')),
+                  ButtonSegment(value: 20, label: Text('20秒')),
+                ],
+                selected: {_autoNextSeconds},
+                onSelectionChanged: (selection) => setState(() => _autoNextSeconds = selection.first),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
         FutureBuilder<List<DictationItem>>(
           future: _customFuture,
           builder: (context, snapshot) {
             final custom = snapshot.data ?? [];
-            final items = _itemsForCurrentSelection(custom);
+            final allItems = _itemsForCurrentSelection(custom);
+            final items = allItems.take(_itemCount).toList();
             final customCount = items.where((item) => item.id.startsWith('custom_')).length;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -925,8 +1368,8 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
                   icon: Icons.hearing_outlined,
                   title: '听写说明',
                   child: Text(
-                    '已匹配 ${items.length} 个听写内容，其中自定义 $customCount 个。'
-                    '朗读质量取决于手机系统 TTS 引擎和离线语音包。',
+                    '本次听写 ${items.length} 个，可选总量 ${allItems.length} 个，其中自定义 $customCount 个。'
+                    '孩子写在纸上，结束后家长勾选对错。',
                   ),
                 ),
                 const SizedBox(height: 18),
@@ -936,21 +1379,26 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('可以拍照或从相册选择词语表，文字识别在手机本地完成，识别后可编辑再保存。'),
+                      const Text('可以手动输入词语，也可以用已配置的 AI API 识别图片并整理成听写内容。'),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 10,
                         runSpacing: 10,
                         children: [
                           FilledButton.tonalIcon(
-                            onPressed: () => _openOcrImport(ImageSource.camera),
+                            onPressed: () => _openDictationImport(ImageSource.camera),
                             icon: const Icon(Icons.photo_camera_outlined),
-                            label: const Text('拍照识别'),
+                            label: const Text('拍照 AI 导入'),
                           ),
                           FilledButton.tonalIcon(
-                            onPressed: () => _openOcrImport(ImageSource.gallery),
+                            onPressed: () => _openDictationImport(ImageSource.gallery),
                             icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('相册识别'),
+                            label: const Text('相册 AI 导入'),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: () => _openDictationImport(null),
+                            icon: const Icon(Icons.edit_note_outlined),
+                            label: const Text('手动录入'),
                           ),
                           OutlinedButton.icon(
                             onPressed: custom.isEmpty
@@ -976,7 +1424,12 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
                       : () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => DictationSessionPage(subject: _subject, grade: _grade, items: items),
+                              builder: (_) => DictationSessionPage(
+                                subject: _subject,
+                                grade: _grade,
+                                items: items,
+                                autoNextSeconds: _autoNextSeconds,
+                              ),
                             ),
                           );
                         },
@@ -998,10 +1451,10 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
     ].where((item) => item.subject == _subject && item.grade == _grade).toList();
   }
 
-  Future<void> _openOcrImport(ImageSource source) async {
+  Future<void> _openDictationImport(ImageSource? source) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => OcrImportPage(
+        builder: (_) => DictationImportPage(
           initialSubject: _subject,
           initialGrade: _grade,
           source: source,
@@ -1014,8 +1467,8 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
   }
 }
 
-class OcrQuestionImportPage extends StatefulWidget {
-  const OcrQuestionImportPage({
+class QuestionImportPage extends StatefulWidget {
+  const QuestionImportPage({
     required this.initialSubject,
     required this.initialGrade,
     required this.source,
@@ -1024,24 +1477,26 @@ class OcrQuestionImportPage extends StatefulWidget {
 
   final Subject initialSubject;
   final int initialGrade;
-  final ImageSource source;
+  final ImageSource? source;
 
   @override
-  State<OcrQuestionImportPage> createState() => _OcrQuestionImportPageState();
+  State<QuestionImportPage> createState() => _QuestionImportPageState();
 }
 
-class _OcrQuestionImportPageState extends State<OcrQuestionImportPage> {
+class _QuestionImportPageState extends State<QuestionImportPage> {
   final _picker = ImagePicker();
   final _rawController = TextEditingController();
   late Subject _subject = widget.initialSubject;
   late int _grade = widget.initialGrade;
-  bool _recognizing = false;
+  bool _importing = false;
   String? _message;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _pickAndRecognize());
+    if (widget.source != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pickAndAnalyze());
+    }
   }
 
   @override
@@ -1060,9 +1515,17 @@ class _OcrQuestionImportPageState extends State<OcrQuestionImportPage> {
         padding: const EdgeInsets.all(20),
         children: [
           PageTitle(
-            icon: widget.source == ImageSource.camera ? Icons.photo_camera_outlined : Icons.photo_library_outlined,
-            title: widget.source == ImageSource.camera ? '拍照识别' : '相册识别',
-            subtitle: '识别后可编辑，保存到本机题库',
+            icon: widget.source == null
+                ? Icons.edit_note_outlined
+                : widget.source == ImageSource.camera
+                    ? Icons.photo_camera_outlined
+                    : Icons.photo_library_outlined,
+            title: widget.source == null
+                ? '手动录入'
+                : widget.source == ImageSource.camera
+                    ? '拍照 AI 导入'
+                    : '相册 AI 导入',
+            subtitle: 'AI 会整理文本，保存前仍可手动编辑',
           ),
           const SizedBox(height: 18),
           SubjectSelector(value: _subject, onChanged: (value) => setState(() => _subject = value)),
@@ -1075,14 +1538,14 @@ class _OcrQuestionImportPageState extends State<OcrQuestionImportPage> {
             child: Text(
               '选择题：题目|选项1|选项2|选项3|选项4|答案|解析\n'
               '填空题：题目=答案\n'
-              'OCR 后请先检查文字，再保存。',
+              'AI 整理后请先检查文字，再保存。',
             ),
           ),
           const SizedBox(height: 16),
-          if (_recognizing)
+          if (_importing)
             const AppPanel(
-              icon: Icons.document_scanner_outlined,
-              title: '正在识别',
+              icon: Icons.auto_awesome_outlined,
+              title: '正在用 AI 整理',
               child: LinearProgressIndicator(),
             )
           else
@@ -1135,15 +1598,15 @@ class _OcrQuestionImportPageState extends State<OcrQuestionImportPage> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _recognizing ? null : _pickAndRecognize,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('重新选择'),
+                  onPressed: _importing || widget.source == null ? null : _pickAndAnalyze,
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  label: const Text('重新 AI 导入'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: questions.isEmpty || _recognizing ? null : () => _save(questions),
+                  onPressed: questions.isEmpty || _importing ? null : () => _save(questions),
                   icon: const Icon(Icons.save_outlined),
                   label: const Text('保存'),
                 ),
@@ -1155,53 +1618,48 @@ class _OcrQuestionImportPageState extends State<OcrQuestionImportPage> {
     );
   }
 
-  Future<void> _pickAndRecognize() async {
+  Future<void> _pickAndAnalyze() async {
     setState(() {
-      _recognizing = true;
+      _importing = true;
       _message = null;
     });
 
     try {
-      final image = await _picker.pickImage(source: widget.source, imageQuality: 92);
+      final config = await LocalStore.loadAiConfig();
+      if (!config.isReady) {
+        throw const FormatException('请先到设置中填写并开启 AI API 渠道。');
+      }
+      final image = await _picker.pickImage(source: widget.source!, imageQuality: 92);
       if (image == null) {
         if (mounted) {
           setState(() {
-            _recognizing = false;
+            _importing = false;
             _message = '没有选择图片。';
           });
         }
         return;
       }
 
-      final recognizer = TextRecognizer(
-        script: _subject == Subject.english ? TextRecognitionScript.latin : TextRecognitionScript.chinese,
+      final text = await AiImportService.analyzeImage(
+        config: config,
+        image: image,
+        instruction: '请识别图片中的小学${_subject.label}${_grade}年级练习题，并整理成纯文本。'
+            '每行一道题。选择题格式：题目|选项1|选项2|选项3|选项4|答案|解析。'
+            '填空题格式：题目=答案。不要输出解释说明，不要输出 Markdown。',
       );
-      final inputImage = InputImage.fromFilePath(image.path);
-      final RecognizedText recognizedText;
-      try {
-        recognizedText = await recognizer.processImage(inputImage);
-      } finally {
-        await recognizer.close();
-      }
-
-      final text = recognizedText.blocks
-          .expand((block) => block.lines)
-          .map((line) => line.text)
-          .where((line) => line.trim().isNotEmpty)
-          .join('\n');
 
       if (mounted) {
         setState(() {
           _rawController.text = text;
-          _recognizing = false;
+          _importing = false;
           _message = text.isEmpty ? '没有识别到文字，请换一张更清晰的图片。' : null;
         });
       }
     } catch (error) {
       if (mounted) {
         setState(() {
-          _recognizing = false;
-          _message = '识别失败：$error';
+          _importing = false;
+          _message = 'AI 导入失败：$error';
         });
       }
     }
@@ -1286,8 +1744,8 @@ String resolveOptionAnswer(String rawAnswer, List<String> options) {
   return rawAnswer.trim();
 }
 
-class OcrImportPage extends StatefulWidget {
-  const OcrImportPage({
+class DictationImportPage extends StatefulWidget {
+  const DictationImportPage({
     required this.initialSubject,
     required this.initialGrade,
     required this.source,
@@ -1296,24 +1754,26 @@ class OcrImportPage extends StatefulWidget {
 
   final Subject initialSubject;
   final int initialGrade;
-  final ImageSource source;
+  final ImageSource? source;
 
   @override
-  State<OcrImportPage> createState() => _OcrImportPageState();
+  State<DictationImportPage> createState() => _DictationImportPageState();
 }
 
-class _OcrImportPageState extends State<OcrImportPage> {
+class _DictationImportPageState extends State<DictationImportPage> {
   final _picker = ImagePicker();
   final _rawController = TextEditingController();
   late Subject _subject = widget.initialSubject;
   late int _grade = widget.initialGrade;
-  bool _recognizing = false;
+  bool _importing = false;
   String? _message;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _pickAndRecognize());
+    if (widget.source != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pickAndAnalyze());
+    }
   }
 
   @override
@@ -1332,9 +1792,17 @@ class _OcrImportPageState extends State<OcrImportPage> {
         padding: const EdgeInsets.all(20),
         children: [
           PageTitle(
-            icon: widget.source == ImageSource.camera ? Icons.photo_camera_outlined : Icons.photo_library_outlined,
-            title: widget.source == ImageSource.camera ? '拍照识别' : '相册识别',
-            subtitle: '识别后可编辑，保存到本机听写本',
+            icon: widget.source == null
+                ? Icons.edit_note_outlined
+                : widget.source == ImageSource.camera
+                    ? Icons.photo_camera_outlined
+                    : Icons.photo_library_outlined,
+            title: widget.source == null
+                ? '手动录入'
+                : widget.source == ImageSource.camera
+                    ? '拍照 AI 导入'
+                    : '相册 AI 导入',
+            subtitle: 'AI 会整理词语，保存前仍可手动编辑',
           ),
           const SizedBox(height: 18),
           SubjectSelector(
@@ -1345,10 +1813,10 @@ class _OcrImportPageState extends State<OcrImportPage> {
           const SizedBox(height: 16),
           GradeSelector(value: _grade, onChanged: (value) => setState(() => _grade = value)),
           const SizedBox(height: 16),
-          if (_recognizing)
+          if (_importing)
             const AppPanel(
-              icon: Icons.document_scanner_outlined,
-              title: '正在识别',
+              icon: Icons.auto_awesome_outlined,
+              title: '正在用 AI 整理',
               child: LinearProgressIndicator(),
             )
           else
@@ -1394,15 +1862,15 @@ class _OcrImportPageState extends State<OcrImportPage> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _recognizing ? null : _pickAndRecognize,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('重新选择'),
+                  onPressed: _importing || widget.source == null ? null : _pickAndAnalyze,
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  label: const Text('重新 AI 导入'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: words.isEmpty || _recognizing ? null : () => _save(words),
+                  onPressed: words.isEmpty || _importing ? null : () => _save(words),
                   icon: const Icon(Icons.save_outlined),
                   label: const Text('保存'),
                 ),
@@ -1414,53 +1882,48 @@ class _OcrImportPageState extends State<OcrImportPage> {
     );
   }
 
-  Future<void> _pickAndRecognize() async {
+  Future<void> _pickAndAnalyze() async {
     setState(() {
-      _recognizing = true;
+      _importing = true;
       _message = null;
     });
 
     try {
-      final image = await _picker.pickImage(source: widget.source, imageQuality: 92);
+      final config = await LocalStore.loadAiConfig();
+      if (!config.isReady) {
+        throw const FormatException('请先到设置中填写并开启 AI API 渠道。');
+      }
+      final image = await _picker.pickImage(source: widget.source!, imageQuality: 92);
       if (image == null) {
         if (mounted) {
           setState(() {
-            _recognizing = false;
+            _importing = false;
             _message = '没有选择图片。';
           });
         }
         return;
       }
 
-      final recognizer = TextRecognizer(
-        script: _subject == Subject.chinese ? TextRecognitionScript.chinese : TextRecognitionScript.latin,
+      final text = await AiImportService.analyzeImage(
+        config: config,
+        image: image,
+        instruction: _subject == Subject.english
+            ? '请识别图片中的小学英语${_grade}年级单词或短语，整理为纯文本，每行一个英文单词或短语。不要输出中文解释，不要输出 Markdown。'
+            : '请识别图片中的小学语文${_grade}年级听写词语，整理为纯文本，每行一个词语。不要输出拼音、解释、序号或 Markdown。',
       );
-      final inputImage = InputImage.fromFilePath(image.path);
-      final RecognizedText recognizedText;
-      try {
-        recognizedText = await recognizer.processImage(inputImage);
-      } finally {
-        await recognizer.close();
-      }
-
-      final text = recognizedText.blocks
-          .expand((block) => block.lines)
-          .map((line) => line.text)
-          .where((line) => line.trim().isNotEmpty)
-          .join('\n');
 
       if (mounted) {
         setState(() {
           _rawController.text = text;
-          _recognizing = false;
+          _importing = false;
           _message = text.isEmpty ? '没有识别到文字，请换一张更清晰的图片。' : null;
         });
       }
     } catch (error) {
       if (mounted) {
         setState(() {
-          _recognizing = false;
-          _message = '识别失败：$error';
+          _importing = false;
+          _message = 'AI 导入失败：$error';
         });
       }
     }
@@ -1478,7 +1941,7 @@ class _OcrImportPageState extends State<OcrImportPage> {
             grade: _grade,
             text: entry.value,
             hint: _subject == Subject.english ? '自定义英文听写' : '自定义语文听写',
-            sentence: '来自拍照或相册文字识别。',
+            sentence: '来自手动录入或 AI 图片导入。',
           ),
         )
         .toList();
@@ -1652,22 +2115,23 @@ class DictationSessionPage extends StatefulWidget {
     required this.subject,
     required this.grade,
     required this.items,
+    required this.autoNextSeconds,
     super.key,
   });
 
   final Subject subject;
   final int grade;
   final List<DictationItem> items;
+  final int autoNextSeconds;
 
   @override
   State<DictationSessionPage> createState() => _DictationSessionPageState();
 }
 
 class _DictationSessionPageState extends State<DictationSessionPage> {
-  final _tts = FlutterTts();
-  final _controller = TextEditingController();
-  final _answers = <String, String>{};
+  final _tts = AppTtsService();
   final _startAt = DateTime.now();
+  Timer? _autoTimer;
   int _index = 0;
   bool _slow = false;
 
@@ -1679,8 +2143,8 @@ class _DictationSessionPageState extends State<DictationSessionPage> {
 
   @override
   void dispose() {
-    _tts.stop();
-    _controller.dispose();
+    _autoTimer?.cancel();
+    _tts.dispose();
     super.dispose();
   }
 
@@ -1716,23 +2180,25 @@ class _DictationSessionPageState extends State<DictationSessionPage> {
             ),
           ),
           const SizedBox(height: 24),
-          AppPanel(
-            icon: Icons.lightbulb_outline,
-            title: '提示',
-            child: Text(item.hint),
-          ),
-          const SizedBox(height: 18),
-          TextField(
-            controller: _controller,
-            decoration: const InputDecoration(
-              labelText: '输入听到的内容',
-              border: OutlineInputBorder(),
+          if (widget.subject == Subject.english) ...[
+            AppPanel(
+              icon: Icons.lightbulb_outline,
+              title: '英文提示',
+              child: Text(item.hint),
             ),
-            textInputAction: TextInputAction.done,
-            onChanged: (value) => _answers[item.id] = value,
+            const SizedBox(height: 18),
+          ],
+          AppPanel(
+            icon: Icons.edit_outlined,
+            title: '纸上听写',
+            child: Text(
+              widget.autoNextSeconds > 0
+                  ? '孩子写在纸上。${widget.autoNextSeconds} 秒后自动进入下一个，也可以手动点击。'
+                  : '孩子写在纸上，写完后点击下一个。',
+            ),
           ),
           const SizedBox(height: 12),
-          Text('例句会在结果页显示，听写时先专注输入。', style: Theme.of(context).textTheme.bodySmall),
+          Text('当前只朗读词语，不在手机上输入答案。', style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
       bottomNavigationBar: Padding(
@@ -1759,54 +2225,138 @@ class _DictationSessionPageState extends State<DictationSessionPage> {
   }
 
   Future<void> _speakCurrent() async {
+    _autoTimer?.cancel();
     final item = widget.items[_index];
-    await _tts.setLanguage(widget.subject.ttsLanguage);
-    await _tts.setSpeechRate(_slow ? 0.35 : 0.48);
-    await _tts.setPitch(1);
-    await _tts.stop();
-    await _tts.speak(item.text);
+    try {
+      await _tts.speak(text: item.text, language: widget.subject.ttsLanguage, slow: _slow);
+      _scheduleAutoNext();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  void _scheduleAutoNext() {
+    if (widget.autoNextSeconds <= 0) {
+      return;
+    }
+    _autoTimer = Timer(Duration(seconds: widget.autoNextSeconds), () {
+      if (!mounted) {
+        return;
+      }
+      if (_index == widget.items.length - 1) {
+        _submit();
+      } else {
+        _next();
+      }
+    });
   }
 
   void _previous() {
-    _answers[widget.items[_index].id] = _controller.text;
+    _autoTimer?.cancel();
     setState(() {
       _index--;
-      _controller.text = _answers[widget.items[_index].id] ?? '';
     });
     _speakCurrent();
   }
 
   void _next() {
-    _answers[widget.items[_index].id] = _controller.text;
+    _autoTimer?.cancel();
     setState(() {
       _index++;
-      _controller.text = _answers[widget.items[_index].id] ?? '';
     });
     _speakCurrent();
   }
 
   Future<void> _submit() async {
-    _answers[widget.items[_index].id] = _controller.text;
+    await _tts.stop();
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => DictationReviewPage(items: widget.items, startedAt: _startAt),
+      ),
+    );
+  }
+}
+
+class DictationReviewPage extends StatefulWidget {
+  const DictationReviewPage({
+    required this.items,
+    required this.startedAt,
+    super.key,
+  });
+
+  final List<DictationItem> items;
+  final DateTime startedAt;
+
+  @override
+  State<DictationReviewPage> createState() => _DictationReviewPageState();
+}
+
+class _DictationReviewPageState extends State<DictationReviewPage> {
+  late final Map<String, bool> _correct = {for (final item in widget.items) item.id: true};
+
+  @override
+  Widget build(BuildContext context) {
+    final correctCount = _correct.values.where((value) => value).length;
+    return Scaffold(
+      appBar: AppBar(title: const Text('家长批改')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          AppPanel(
+            icon: Icons.checklist_outlined,
+            title: '本次听写词语',
+            child: Text('请根据孩子纸上的答案勾选对错。正确 $correctCount / ${widget.items.length}'),
+          ),
+          const SizedBox(height: 12),
+          ...widget.items.map(
+            (item) => Card(
+              elevation: 0,
+              child: SwitchListTile(
+                value: _correct[item.id] ?? true,
+                onChanged: (value) => setState(() => _correct[item.id] = value),
+                title: Text(item.text),
+                subtitle: item.subject == Subject.english ? Text(item.hint) : null,
+                secondary: Icon((_correct[item.id] ?? true) ? Icons.check_circle_outline : Icons.cancel_outlined),
+              ),
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+        child: FilledButton.icon(
+          onPressed: _finish,
+          icon: const Icon(Icons.done_all),
+          label: const Text('完成批改'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _finish() async {
     final results = widget.items.map((item) {
-      final userAnswer = _answers[item.id] ?? '';
-      final correct = normalizeAnswer(userAnswer, item.subject) == normalizeAnswer(item.text, item.subject);
+      final isCorrect = _correct[item.id] ?? true;
       return ResultItem(
         sourceId: item.id,
         subject: item.subject,
         grade: item.grade,
         mode: '听写',
-        question: '听写：${item.hint}',
+        question: '听写：${item.text}',
         correctAnswer: item.text,
-        userAnswer: userAnswer.isEmpty ? '未作答' : userAnswer,
-        explanation: item.sentence,
-        isCorrect: correct,
+        userAnswer: isCorrect ? '家长标记正确' : '家长标记错误',
+        explanation: item.subject == Subject.english ? item.hint : '纸上听写。',
+        isCorrect: isCorrect,
       );
     }).toList();
-    await _tts.stop();
-    if (!mounted) {
-      return;
-    }
-    await saveResultAndOpenPage(context, results, _startAt);
+    await saveResultAndOpenPage(context, results, widget.startedAt);
   }
 }
 
@@ -1837,6 +2387,7 @@ Future<void> saveResultAndOpenPage(
       .toList();
 
   await LocalStore.addMistakes(wrongEntries);
+  final rewards = await LocalStore.addReward(score: score, total: results.length);
   await LocalStore.addRecord(
     PracticeRecord(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -1856,7 +2407,13 @@ Future<void> saveResultAndOpenPage(
   }
   await Navigator.of(context).pushReplacement(
     MaterialPageRoute(
-      builder: (_) => ResultPage(results: results, score: score, correct: correct, durationSeconds: duration),
+      builder: (_) => ResultPage(
+        results: results,
+        score: score,
+        correct: correct,
+        durationSeconds: duration,
+        rewards: rewards,
+      ),
     ),
   );
 }
@@ -1867,6 +2424,7 @@ class ResultPage extends StatelessWidget {
     required this.score,
     required this.correct,
     required this.durationSeconds,
+    required this.rewards,
     super.key,
   });
 
@@ -1874,6 +2432,7 @@ class ResultPage extends StatelessWidget {
   final int score;
   final int correct;
   final int durationSeconds;
+  final RewardProfile rewards;
 
   @override
   Widget build(BuildContext context) {
@@ -1893,6 +2452,8 @@ class ResultPage extends StatelessWidget {
                   Text('$score 分', style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800)),
                   const SizedBox(height: 8),
                   Text('正确 $correct / ${results.length}，用时 ${formatDuration(durationSeconds)}'),
+                  const SizedBox(height: 8),
+                  Text('获得积分，当前等级 ${rewards.level}，总积分 ${rewards.points}'),
                 ],
               ),
             ),
@@ -1994,11 +2555,13 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final _tts = FlutterTts();
+  final _tts = AppTtsService();
+  late Future<AiConfig> _aiFuture = LocalStore.loadAiConfig();
+  late Future<TtsApiConfig> _ttsFuture = LocalStore.loadTtsApiConfig();
 
   @override
   void dispose() {
-    _tts.stop();
+    _tts.dispose();
     super.dispose();
   }
 
@@ -2007,15 +2570,15 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const PageTitle(icon: Icons.settings_outlined, title: '设置', subtitle: '本地设置和 TTS 测试'),
+        const PageTitle(icon: Icons.settings_outlined, title: '设置', subtitle: '手机自带 TTS 和 API 兜底'),
         const SizedBox(height: 16),
         AppPanel(
           icon: Icons.volume_up_outlined,
-          title: '系统 TTS 测试',
+          title: '手机自带 TTS 测试',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('朗读效果由手机系统语音引擎决定。若无法朗读，请在系统设置中安装中文或英文语音包。'),
+              const Text('朗读效果由手机自带语音引擎决定。若无法朗读，请在手机设置中安装中文或英文语音包。'),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 10,
@@ -2037,6 +2600,52 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         const SizedBox(height: 12),
+        FutureBuilder<TtsApiConfig>(
+          future: _ttsFuture,
+          builder: (context, snapshot) {
+            final config = snapshot.data ?? TtsApiConfig.empty;
+            return AppPanel(
+              icon: Icons.graphic_eq_outlined,
+              title: 'TTS API 兜底',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(config.isReady ? '已开启：${config.model} / ${config.voice}' : '默认使用手机自带 TTS。手机自带 TTS 不可用时，可配置 OpenAI 格式 TTS API。'),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _openTtsApiSettings,
+                    icon: const Icon(Icons.tune_outlined),
+                    label: const Text('配置 TTS API'),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        FutureBuilder<AiConfig>(
+          future: _aiFuture,
+          builder: (context, snapshot) {
+            final config = snapshot.data ?? AiConfig.empty;
+            return AppPanel(
+              icon: Icons.auto_awesome_outlined,
+              title: 'AI API 渠道',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(config.isReady ? '已开启：${config.model}' : '未开启。可用于拍照整理题库和听写词。'),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _openAiSettings,
+                    icon: const Icon(Icons.tune_outlined),
+                    label: const Text('配置 AI'),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
         const AppPanel(
           icon: Icons.lock_outline,
           title: '隐私',
@@ -2053,10 +2662,215 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _speak(String language, String text) async {
-    await _tts.setLanguage(language);
-    await _tts.setSpeechRate(0.48);
-    await _tts.stop();
-    await _tts.speak(text);
+    try {
+      await _tts.speak(text: text, language: language, slow: false);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error')),
+      );
+    }
+  }
+
+  Future<void> _openAiSettings() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AiSettingsPage()));
+    if (mounted) {
+      setState(() => _aiFuture = LocalStore.loadAiConfig());
+    }
+  }
+
+  Future<void> _openTtsApiSettings() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TtsApiSettingsPage()));
+    if (mounted) {
+      setState(() => _ttsFuture = LocalStore.loadTtsApiConfig());
+    }
+  }
+}
+
+class AiSettingsPage extends StatefulWidget {
+  const AiSettingsPage({super.key});
+
+  @override
+  State<AiSettingsPage> createState() => _AiSettingsPageState();
+}
+
+class _AiSettingsPageState extends State<AiSettingsPage> {
+  final _baseUrl = TextEditingController();
+  final _apiKey = TextEditingController();
+  final _model = TextEditingController();
+  bool _enabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    LocalStore.loadAiConfig().then((config) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _enabled = config.enabled;
+        _baseUrl.text = config.baseUrl;
+        _apiKey.text = config.apiKey;
+        _model.text = config.model;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _baseUrl.dispose();
+    _apiKey.dispose();
+    _model.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('AI API 设置')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          SwitchListTile(
+            value: _enabled,
+            onChanged: (value) => setState(() => _enabled = value),
+            title: const Text('启用 AI 图片导入'),
+            subtitle: const Text('开启后，选择的图片会发送到你配置的 AI API。'),
+          ),
+          const SizedBox(height: 12),
+          TextField(controller: _baseUrl, decoration: const InputDecoration(labelText: 'Base URL', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: _model, decoration: const InputDecoration(labelText: '模型', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: _apiKey, obscureText: true, decoration: const InputDecoration(labelText: 'API Key', border: OutlineInputBorder())),
+          const SizedBox(height: 20),
+          FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save_outlined), label: const Text('保存')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _save() async {
+    await LocalStore.saveAiConfig(AiConfig(enabled: _enabled, baseUrl: _baseUrl.text.trim(), apiKey: _apiKey.text.trim(), model: _model.text.trim()));
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+}
+
+class TtsApiSettingsPage extends StatefulWidget {
+  const TtsApiSettingsPage({super.key});
+
+  @override
+  State<TtsApiSettingsPage> createState() => _TtsApiSettingsPageState();
+}
+
+class _TtsApiSettingsPageState extends State<TtsApiSettingsPage> {
+  final _baseUrl = TextEditingController();
+  final _apiKey = TextEditingController();
+  final _model = TextEditingController();
+  final _voice = TextEditingController();
+  final _tester = AppTtsService();
+  bool _enabled = false;
+  bool _testing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    LocalStore.loadTtsApiConfig().then((config) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _enabled = config.enabled;
+        _baseUrl.text = config.baseUrl;
+        _apiKey.text = config.apiKey;
+        _model.text = config.model;
+        _voice.text = config.voice;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _baseUrl.dispose();
+    _apiKey.dispose();
+    _model.dispose();
+    _voice.dispose();
+    _tester.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('TTS API 设置')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          SwitchListTile(
+            value: _enabled,
+            onChanged: (value) => setState(() => _enabled = value),
+            title: const Text('启用 TTS API 兜底'),
+            subtitle: const Text('优先使用手机自带 TTS；手机自带 TTS 报错时才调用这里配置的 OpenAI 格式 /audio/speech。'),
+          ),
+          const SizedBox(height: 12),
+          TextField(controller: _baseUrl, decoration: const InputDecoration(labelText: 'Base URL', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: _model, decoration: const InputDecoration(labelText: 'TTS 模型', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: _voice, decoration: const InputDecoration(labelText: 'Voice', border: OutlineInputBorder())),
+          const SizedBox(height: 12),
+          TextField(controller: _apiKey, obscureText: true, decoration: const InputDecoration(labelText: 'API Key', border: OutlineInputBorder())),
+          const SizedBox(height: 20),
+          FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save_outlined), label: const Text('保存')),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _testing ? null : _testApi,
+            icon: const Icon(Icons.record_voice_over_outlined),
+            label: Text(_testing ? '测试中' : '测试 TTS API'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  TtsApiConfig _currentConfig() {
+    return TtsApiConfig(
+      enabled: _enabled,
+      baseUrl: _baseUrl.text.trim(),
+      apiKey: _apiKey.text.trim(),
+      model: _model.text.trim(),
+      voice: _voice.text.trim(),
+    );
+  }
+
+  Future<void> _save() async {
+    await LocalStore.saveTtsApiConfig(_currentConfig());
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _testApi() async {
+    setState(() => _testing = true);
+    try {
+      await _tester.speakWithApiOnly(config: _currentConfig(), text: '你好，欢迎使用学宝。', slow: false);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$error')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _testing = false);
+      }
+    }
   }
 }
 
@@ -2102,14 +2916,20 @@ class GradeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SegmentedButton<int>(
-      segments: const [
-        ButtonSegment(value: 1, label: Text('一年级')),
-        ButtonSegment(value: 2, label: Text('二年级')),
-        ButtonSegment(value: 3, label: Text('三年级')),
-      ],
-      selected: {value},
-      onSelectionChanged: (selection) => onChanged(selection.first),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SegmentedButton<int>(
+        segments: const [
+          ButtonSegment(value: 1, label: Text('一')),
+          ButtonSegment(value: 2, label: Text('二')),
+          ButtonSegment(value: 3, label: Text('三')),
+          ButtonSegment(value: 4, label: Text('四')),
+          ButtonSegment(value: 5, label: Text('五')),
+          ButtonSegment(value: 6, label: Text('六')),
+        ],
+        selected: {value},
+        onSelectionChanged: (selection) => onChanged(selection.first),
+      ),
     );
   }
 }
