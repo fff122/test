@@ -1562,21 +1562,28 @@ class _QuizPageState extends State<QuizPage> {
               onChanged: (value) => _answers[question.id] = value,
             )
           else
-            ...question.options.map(
-              (option) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: RadioListTile<String>(
-                  value: option,
-                  groupValue: _answers[question.id],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() => _answers[question.id] = value);
-                    }
-                  },
-                  title: Text(option),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  tileColor: Colors.white,
-                ),
+            RadioGroup<String>(
+              groupValue: _answers[question.id],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _answers[question.id] = value);
+                }
+              },
+              child: Column(
+                children: question.options
+                    .map(
+                      (option) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: RadioListTile<String>(
+                          value: option,
+                          title: Text(option),
+                          selected: _answers[question.id] == option,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          tileColor: Colors.white,
+                        ),
+                      ),
+                    )
+                    .toList(),
               ),
             ),
           const SizedBox(height: 10),
