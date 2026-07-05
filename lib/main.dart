@@ -5,7 +5,6 @@ import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -730,13 +729,11 @@ class AiImportService {
 class AppTtsService {
   AppTtsService();
 
-  final _systemTts = FlutterTts();
   final _apiPlayer = AudioPlayer();
   bool _disposed = false;
 
   Future<void> speak({
     required String text,
-    required String language,
     required bool slow,
   }) async {
     if (_disposed) {
@@ -744,26 +741,14 @@ class AppTtsService {
     }
 
     await stop();
-    Object? systemError;
-    try {
-      await _speakWithSystemTts(text: text, language: language, slow: slow);
-      return;
-    } catch (error) {
-      systemError = error;
-    }
-
     final config = await LocalStore.loadTtsApiConfig();
     if (!config.isReady) {
-      throw FormatException(
-        '手机自带 TTS 无法朗读。请到设置里启用并填写 OpenAI 格式 TTS API。'
-        '\n手机自带 TTS 错误：$systemError',
-      );
+      throw const FormatException('请先到设置里启用并填写 OpenAI 格式 TTS API。');
     }
     await _speakWithApi(config: config, text: text, slow: slow);
   }
 
   Future<void> stop() async {
-    await _systemTts.stop();
     await _apiPlayer.stop();
   }
 
@@ -781,23 +766,7 @@ class AppTtsService {
 
   void dispose() {
     _disposed = true;
-    unawaited(_systemTts.stop());
     unawaited(_apiPlayer.dispose());
-  }
-
-  Future<void> _speakWithSystemTts({
-    required String text,
-    required String language,
-    required bool slow,
-  }) async {
-    await _systemTts.awaitSpeakCompletion(true);
-    await _systemTts.setLanguage(language);
-    await _systemTts.setSpeechRate(slow ? 0.35 : 0.48);
-    await _systemTts.setPitch(1);
-    final result = await _systemTts.speak(text);
-    if (result is int && result == 0) {
-      throw const FormatException('手机自带 TTS 返回失败。');
-    }
   }
 
   Future<void> _speakWithApi({
@@ -877,12 +846,186 @@ final questionBank = buildQuestionBank();
 final dictationBank = buildDictationBank();
 
 const chineseWordsByGrade = <int, List<String>>{
-  1: ['天空', '太阳', '月亮', '白云', '小鸟', '大山', '河水', '花朵', '朋友', '同学', '老师', '书包', '铅笔', '认真', '快乐', '春天', '秋天', '上学', '写字', '读书'],
-  2: ['明亮', '温暖', '勇敢', '仔细', '城市', '乡村', '森林', '草原', '海洋', '故事', '办法', '时候', '方向', '礼物', '教室', '操场', '希望', '幸福', '已经', '容易'],
-  3: ['观察', '准备', '旅行', '诚实', '鼓励', '继续', '安静', '热闹', '漂亮', '奇妙', '忽然', '仍然', '愿望', '丰富', '保护', '节约', '整齐', '危险', '著名', '特别'],
-  4: ['宽阔', '敏捷', '均匀', '规律', '痕迹', '幻想', '改善', '探索', '凝视', '舒适', '联系', '判断', '解释', '欣赏', '尊重', '坚强', '熟悉', '陌生', '创造', '责任'],
-  5: ['清晰', '协调', '谨慎', '奉献', '启发', '实践', '比较', '控制', '效率', '资料', '范围', '推测', '准确', '平衡', '维护', '独立', '珍惜', '普通', '灿烂', '辽阔'],
-  6: ['徘徊', '严峻', '领域', '贡献', '诞生', '锻炼', '毅力', '目标', '抉择', '荣誉', '挫折', '真理', '信念', '陶醉', '慷慨', '渺小', '浏览', '抵御', '沉着', '卓越'],
+  1: [
+    '一二', '第一', '二胡', '二月', '三天', '三个', '上下', '上车',
+    '人口', '出口', '目光', '目的', '木耳', '耳朵', '手机', '双手',
+    '日子', '日月', '田野', '田地', '禾田', '禾苗', '火车', '上火',
+    '害虫', '虫子', '白云', '乌云', '大山', '山羊', '八个', '八天',
+    '十个', '十天', '走了', '来了', '子女', '子孙', '亲人', '大小',
+    '大人', '月牙', '月亮', '儿子', '少儿', '开头', '头顶', '里面',
+    '里外', '可口', '认可', '东西', '东方', '西瓜', '西方', '今天',
+    '天地', '四周', '四面', '不是', '可是', '女儿', '母女', '开心',
+    '开水', '水果', '热水', '出去', '回去', '来往', '来电', '不行',
+    '不能', '小孩', '小米', '多少', '少见', '牛羊', '牛毛', '瓜果',
+    '小鸟', '飞鸟', '早上', '早晨', '书本', '书包', '大刀', '飞刀',
+    '尺子', '米尺', '课本', '本子', '木头', '树木', '森林', '山林',
+    '泥土', '土地', '力量', '电力', '心情', '中文', '中心', '五天',
+    '五年', '立正', '自立', '公正', '正门', '正在', '不在', '后果',
+    '后来', '我们', '我的', '好人', '好事', '长短', '长江', '比较',
+    '比如', '巴士', '大巴', '把手', '车把', '下车', '几个', '个人',
+    '雨水', '下雨', '他们', '她们', '问好', '学问', '有无', '没有',
+    '一半', '半天', '从前', '从来', '你们', '你好', '才能', '天才',
+    '明天', '明白', '同伴', '同学', '放学', '学习', '自己', '自大',
+    '身不由己', '毛衣', '大衣', '白天', '空白', '好的', '是的', '又来',
+    '又是', '和平', '和气', '竹子', '竹叶', '牙齿', '牙印', '马车',
+    '木马', '用心', '用力', '几天', '一只', '只身', '石头', '石子',
+    '多年', '日出', '出来', '见面', '再见', '对面', '对立', '妈妈',
+    '姨妈', '全部', '齐全', '回家', '工人', '工作', '厂房', '厂长',
+    '蓝天', '天空', '大地', '地球', '人们', '人民', '他人', '单一',
+    '二十', '十二', '三十', '三月', '四十', '四月', '十五', '五彩',
+    '上午', '上山', '下班', '下去', '口水', '耳机', '目录', '手脚',
+    '小手', '足球', '手足', '站立',
+  ],
+  2: [
+    '两个', '两人', '就是', '成就', '哪里', '哪个', '宽大', '宽广',
+    '头顶', '屋顶', '目不转睛', '肚子', '肚量', '毛皮', '羊皮', '孩子',
+    '男孩', '跳远', '跳高', '变化', '改变', '南极', '极地', '一片',
+    '叶片', '傍晚', '依傍', '海洋', '大海', '大洋', '作文', '作业',
+    '坏人', '好坏', '送给', '交给', '皮带', '带领', '加法', '办法',
+    '如果', '如此', '脚步', '山脚', '它们', '其它', '女娃', '娃娃',
+    '她们', '她的', '羊毛', '皮毛', '更好', '更加', '知识', '知道',
+    '识字', '识别', '果园', '校园', '毛孔', '鼻孔', '大桥', '石桥',
+    '羊群', '人群', '军队', '队长', '红旗', '彩旗', '铜钱', '铜铁',
+    '句号', '号码', '领队', '毛巾', '围巾', '杨树', '杨柳', '强壮',
+    '壮丽', '梧桐', '桐花', '枫叶', '枫树', '松树', '松鼠', '柏树',
+    '松柏', '棉花', '木棉', '水杉', '杉树', '文化', '桂树', '桂林',
+    '唱歌', '歌曲', '丛林', '一丛', '深浅', '深入', '到处', '好处',
+    '六天', '六月', '熊猫', '黑熊', '小猫', '花猫', '九点', '九月',
+    '朋友', '亲朋', '友好', '亲友', '四季', '春季', '吹风', '吹动',
+    '肥胖', '肥料', '农业', '农民', '帮忙', '连忙', '回归', '归队',
+    '佩戴', '爱戴', '辛苦', '辛劳', '苦瓜', '苦味', '今年', '年月',
+    '称重', '称呼', '柱子', '水柱', '海底', '底下', '杆秤', '枪杆',
+    '秤砣', '秤锤', '做客', '做法', '岁月', '岁数', '车站', '站立',
+    '龙船', '游船', '当然', '自然', '画面', '图画', '幅度', '振幅',
+    '评奖', '评价', '奖品', '奖金', '守候', '等候', '报告', '报纸',
+    '另外', '另有', '及时', '及早', '拿到', '捉拿', '并且', '并非',
+    '信封', '封面', '信心', '相信', '今天', '今后', '写字', '书写',
+    '支付', '支持', '圆形', '圆心', '珠宝', '珍珠', '笔记', '铅笔',
+    '灯光', '台灯', '电灯', '电脑', '哄人', '哄骗', '先生', '先后',
+    '闭嘴', '关闭', '脸面', '脸色', '事情', '事故', '沉重', '沉默',
+    '发型', '白发', '窗户', '门窗', '高楼', '上楼', '依法', '依靠',
+    '尽力', '尽心', '黄色', '黄河',
+  ],
+  3: [
+    '早晨', '晨练', '绒毛', '绒花', '足球', '地球', '汉字', '汉族',
+    '艳丽', '鲜艳', '西服', '服务', '服装', '装饰', '扮演', '装扮',
+    '读者', '阅读', '安静', '静止', '停车', '暂停', '粗糙', '粗壮',
+    '影子', '电影', '落泪', '落叶', '荒唐', '笛子', '汽笛', '荒凉',
+    '跳舞', '舞蹈', '狂风', '狂野', '罚款', '惩罚', '请假', '假期',
+    '互相', '互动', '所以', '场所', '足够', '够本', '猜谜', '猜想',
+    '飞扬', '发扬', '手臂', '臂膀', '寒冷', '寒冬', '半径', '捷径',
+    '斜坡', '倾斜', '霜冻', '霜降', '赠送', '赠品', '刘海', '姓刘',
+    '瓶盖', '井盖', '菊花', '墨菊', '残疾', '摧残', '君主', '君子',
+    '橙子', '橙汁', '送别', '送礼', '挑食', '挑水', '铺路', '铺张',
+    '泥土', '泥泞', '水晶', '晶莹', '紧张', '紧急', '医院', '法院',
+    '脚印', '印刷', '排队', '排练', '列车', '列举', '圆规', '规则',
+    '法则', '准则', '凌乱', '扰乱', '棕熊', '棕色', '迟到', '迟早',
+    '盒饭', '纸盒', '颜色', '颜料', '照料', '资料', '车票', '发票',
+    '飘扬', '飘动', '争斗', '争取', '仙女', '仙境', '新闻', '耳闻',
+    '梨花', '梨树', '勾画', '勾引', '石油', '油条', '曲调', '歌曲',
+    '丰收', '丰富', '火柴', '木柴', '冷淡', '怀旧', '念旧', '围裙',
+    '短裙', '可怜', '怜爱', '饥饿', '挨饿', '几乎', '似乎', '火焰',
+    '气焰', '蜡笔', '腊梅', '烛光', '蜡烛', '富贵', '富强', '诉苦',
+    '诉说', '离开', '离别', '旅游', '旅客', '咱们', '救命', '救援',
+    '命令', '生命', '拼搏', '拼凑', '扫地', '扫兴', '胃口', '肠胃',
+    '水管', '管理', '等待', '等级', '刚好', '阳刚', '流行', '流动',
+    '泪水', '眼泪', '口算', '算盘', '山洞', '漏洞', '准备', '准确',
+    '防备', '备份', '暴发', '暴雨', '墙壁', '墙边', '壁虎', '壁画',
+    '砍柴', '砍价', '蜘蛛', '蛛网', '蛛丝马迹', '漂亮', '撞击', '碰撞',
+    '饱满', '饱餐', '晾晒', '日晒', '搭配', '搭车', '亲近', '亲人',
+    '父爱', '神父', '沙发', '沙漠', '哗啦', '啦啦队', '响声', '响亮',
+    '羽毛', '羽绒', '翠绿', '翠鸟',
+  ],
+  4: [
+    '潮水', '潮湿', '据说', '根据', '河堤', '堤岸', '开阔', '广阔',
+    '盼望', '期盼', '滚动', '翻滚', '顿时', '停顿', '逐渐', '追逐',
+    '渐变', '堵车', '堵塞', '犹如', '犹豫', '雪崩', '崩溃', '震撼',
+    '地震', '霎时', '一霎', '剩余', '业余', '淘米', '淘金', '牵手',
+    '牵连', '鹅蛋', '鹅肉', '卵巢', '卵子', '坑洞', '洼地', '低洼',
+    '填补', '填写', '庄园', '庄稼', '俗气', '低俗', '雀跃', '葡萄',
+    '跳跃', '稻田', '成熟', '水稻', '熟练', '豌豆', '按时', '按照',
+    '舒适', '舒服', '适合', '恐龙', '恐惧', '僵硬', '僵局', '硬币',
+    '硬件', '枪声', '手枪', '耐心', '忍耐', '探险', '侦探', '愉悦',
+    '愉快', '曾经', '不曾', '到达', '表达', '蚊子', '蚊虫', '即使',
+    '立即', '科举', '科考', '横批', '横线', '竖琴', '横竖', '绳子',
+    '绳索', '系紧', '系住', '蝇虫', '果蝇', '证明', '证人', '研究',
+    '科研', '追究', '究竟', '驾照', '行驶', '驾驶', '驶向', '唤醒',
+    '呼唤', '纪律', '记录', '技术', '技能', '修改', '改革', '程度',
+    '行程', '超级', '超市', '亿万', '亿元', '核心', '核能', '奥秘',
+    '深奥', '益智', '效益', '联合', '联系', '质量', '本质', '哲学',
+    '哲理', '任何', '责任', '善良', '友善', '迟暮', '暮年', '吟唱',
+    '吟诵', '题目', '试题', '侧重', '侧面', '峰顶', '山峰', '茅庐',
+    '庐山', '缘分', '缘故', '投降', '诱降', '阁下', '楼阁', '浪费',
+    '免费', '必须', '胡须', '逊色', '谦逊', '运输', '输入', '老虎',
+    '壁虎', '操作', '操场', '占领', '占据', '娇嫩', '嫩芽', '顺利',
+    '柔顺', '均匀', '平均', '折叠', '重叠', '缝隙', '嫌隙', '根茎',
+    '茎叶', '把柄', '手柄', '萎缩', '枯萎', '瞧见', '小瞧', '固定',
+    '坚固', '宅子', '宅院', '临时', '来临', '慎重', '谨慎', '挑选',
+    '选项', '选择', '择优', '地址', '住址', '良心', '良好', '洞穴',
+    '穴位', '餐厅', '客厅', '卧室', '卧底', '专业', '专长', '尺寸',
+    '英寸', '保卫', '卫生', '比较', '较量', '翻腾', '劈头盖脸', '缓慢',
+    '缓解', '浑浊', '污浊', '丈量',
+  ],
+  5: [
+    '适宜', '宜居', '仙鹤', '野鹤', '嫌弃', '嫌疑', '朱熹', '朱红',
+    '镶嵌', '嵌入', '相框', '框架', '匣子', '暗匣', '放哨', '吹哨',
+    '恩情', '恩惠', '韵律', '韵脚', '田亩', '一亩', '播放', '广播',
+    '浇灌', '浇水', '吩咐', '嘱咐', '亭台', '亭子', '榨汁', '压榨',
+    '羡慕', '仰慕', '矮小', '高矮', '懂事', '懂得', '兰花', '兰草',
+    '箩筐', '稻箩', '外婆', '巫婆', '糕点', '蛋糕', '饼干', '月饼',
+    '浸染', '沉浸', '缠绕', '纠缠', '茶叶', '茶水', '捡漏', '捡起',
+    '潮汛', '汛情', '访问', '访谈', '鞋子', '鞋带', '挽救', '挽回',
+    '阻隔', '隔绝', '懒散', '懒虫', '惰性', '懒惰', '稳定', '平稳',
+    '衡量', '平衡', '协议', '协商', '号召', '召唤', '罪臣', '奸臣',
+    '议论', '商议', '宫殿', '皇宫', '奉献', '贡献', '许诺', '诺言',
+    '典型', '典礼', '抄袭', '抄写', '犯罪', '罪恶', '拒绝', '拒收',
+    '负荆请罪', '荆棘', '胆怯', '羞怯', '冠军', '冠名', '俯视', '俯瞰',
+    '喷射', '喷泉', '不胜枚举', '一枚', '箭头', '火箭', '万花筒', '甜筒',
+    '结束', '花束', '赤膊', '赤道', '圆圈', '圈套', '装置', '设置',
+    '入侵', '侵略', '省略', '忽略', '建筑', '筑造', '碉堡', '城堡',
+    '党派', '政党', '山丘', '丘陵', '妨碍', '无妨', '遮蔽', '隐蔽',
+    '陷阱', '沦陷', '拐卖', '拐角', '应酬', '酬宾', '珍贵', '珍藏',
+    '叮嘱', '叮咛', '嘱托', '坍塌', '塌陷', '焦虑', '焦急', '誓言',
+    '发誓', '说谎', '谎言', '延迟', '延期', '后悔', '悔恨', '帮扶',
+    '扶手', '郎君', '郎中', '干爹', '爹娘', '嫂子', '大嫂', '车辆',
+    '好歹', '歹徒', '人迹罕至', '罕见', '纱巾', '纱布', '妻子', '妻儿',
+    '一趟', '赶趟', '托付', '托举', '游泳', '冬泳', '婚姻', '结婚',
+    '祖辈', '辈分', '挨边', '挨近', '祭拜', '祭奠', '乃是', '乃至',
+    '熏陶', '熏染', '杭州', '苏杭', '亥时', '恃宠而骄', '自恃', '哀求',
+    '悲哀', '拘谨', '拘束', '节选', '倾泻', '泻药', '潜伏', '潜入',
+    '考试', '测试', '轮胎', '胎儿', '皇帝', '皇上', '履行', '履历',
+    '疆土', '边疆', '毁灭', '摧毁',
+  ],
+  6: [
+    '毛毯', '毯子', '陈旧', '陈皮', '衣裳', '彩虹', '霓虹', '猪蹄',
+    '马蹄', '腐烂', '腐蚀', '稍等', '稍微', '微笑', '微风', '点缀',
+    '前缀', '幽香', '幽静', '优雅', '文雅', '案件', '答案', '笨拙',
+    '拙劣', '单薄', '薄利', '迷糊', '模糊', '花蕾', '蓓蕾', '衣襟',
+    '襟怀', '恍然', '恍惚', '怨恨', '埋怨', '道德', '美德', '喜鹊',
+    '鹊桥', '蝉鸣', '蝉联', '悬崖', '山崖', '渡口', '轮渡', '绳索',
+    '索要', '倭寇', '敌寇', '副业', '副词', '榴弹', '榴莲', '子弹',
+    '导弹', '抡锤', '抡起', '连贯', '贯通', '下棋', '棋子', '悬挂',
+    '沸水', '沸腾', '山涧', '深涧', '冰雹', '雹子', '屹立', '屹然',
+    '悦耳', '喜悦', '委屈', '屈服', '政治', '政府', '宾客', '宾馆',
+    '灯盏', '一盏', '栏杆', '栏目', '汇聚', '汇集', '爆炸', '火爆',
+    '宣传', '宣布', '旗帜', '易帜', '阅读', '检阅', '隆重', '隆冬',
+    '制约', '制度', '坦白', '平坦', '距离', '差距', '射击', '射箭',
+    '豁然', '豁达', '凛然', '凛冽', '疙瘩', '疙疤', '疙疙瘩瘩', '棍棒',
+    '电棍', '裁缝', '剪裁', '筹集', '筹款', '橡皮', '橡胶', '雕刻',
+    '雕塑', '跺脚', '跺足', '颓废', '颓然', '沮丧', '沮愤', '趴着',
+    '趴下', '抽屉', '屉子', '谜语', '谜底', '高尚', '尚且', '氧气',
+    '缺氧', '倾斜', '倾听', '揭晓', '揭示', '斑马', '斑驳', '燥热',
+    '干燥', '冷漠', '漠然', '磁铁', '磁场', '抵挡', '抵抗', '御用',
+    '御厨', '素材', '素质', '偷盗', '盗窃', '培养', '培育', '咆哮',
+    '咆号', '哮喘', '嗓音', '嗓子', '流淌', '淌下', '哑巴', '沙哑',
+    '揪出', '揪心', '呻吟', '呻呼', '废品', '废除', '汹涌', '汹汹',
+    '涌现', '喷涌', '澎湃', '澎澎', '滂湃', '熄灭', '熄火', '掀起',
+    '掀翻', '困惑', '困扰', '淋雨', '淋浴', '嘿嘿', '糟糕', '糟粕',
+    '对嘛', '皱纹', '褶皱', '勺子', '汤勺', '大棚', '顶棚', '苔藓',
+    '海苔', '青藓', '草坪', '坪坝', '甘蔗', '蔗糖', '瀑布', '飞瀑',
+    '增加', '增多', '缝隙', '裂缝', '谚语', '农谚', '衣袖', '袖子',
+    '篷车', '船篷', '缩小', '缩减',
+  ],
 };
 
 const englishVocabularyRaw = r'''
@@ -1479,52 +1622,148 @@ List<DictationItem> buildDictationBank() {
 List<PracticeQuestion> buildQuestionBank() {
   final questions = <PracticeQuestion>[];
   for (var grade = 1; grade <= 6; grade++) {
-    for (var i = 1; i <= 70; i++) {
-      final a = grade * 3 + i;
-      final b = grade + i % 9 + 1;
-      final answer = grade <= 2 ? a + b : (i.isEven ? a * b : a + b * grade);
-      final expression = grade <= 2 ? '$a + $b' : (i.isEven ? '$a × $b' : '$a + $b × $grade');
-      questions.add(PracticeQuestion(
-        id: 'math_${grade}_$i',
-        subject: Subject.math,
-        grade: grade,
-        question: '$expression = ?',
-        options: makeNumberOptions(answer),
-        answer: '$answer',
-        explanation: '按运算顺序计算 $expression。',
-      ));
+    if (grade == 1) {
+      addFirstGradeMathQuestions(questions);
+    } else {
+      for (var i = 1; i <= 100; i++) {
+        final a = grade * 3 + i;
+        final b = grade + i % 9 + 1;
+        final answer = grade <= 2 ? a + b : (i.isEven ? a * b : a + b * grade);
+        final expression = grade <= 2 ? '$a + $b' : (i.isEven ? '$a × $b' : '$a + $b × $grade');
+        questions.add(PracticeQuestion(
+          id: 'math_${grade}_$i',
+          subject: Subject.math,
+          grade: grade,
+          question: '$expression = ?',
+          options: makeNumberOptions(answer, i),
+          answer: '$answer',
+          explanation: '按运算顺序计算 $expression。',
+        ));
+      }
     }
     final cnWords = chineseWordsByGrade[grade]!;
-    for (var i = 0; i < 70; i++) {
+    for (var i = 0; i < min(140, cnWords.length); i++) {
       final word = cnWords[i % cnWords.length];
-      final options = <String>[];
-      for (var offset = 0; offset < 4; offset++) {
-        options.add(cnWords[(i + offset) % cnWords.length]);
-      }
-      while (options.length < 4) {
-        options.add(cnWords[(options.length + i + 3) % cnWords.length]);
-      }
-      questions.add(PracticeQuestion(id: 'chinese_${grade}_$i', subject: Subject.chinese, grade: grade, question: '下面哪个词语适合听写复习？', options: options, answer: word, explanation: '$word 是 $grade 年级常用词。'));
+      final target = word.substring(0, 1);
+      final options = makeChineseWordOptions(cnWords, word, target, i);
+      questions.add(PracticeQuestion(
+        id: 'chinese_${grade}_$i',
+        subject: Subject.chinese,
+        grade: grade,
+        question: '下面哪个词语含有“$target”字？',
+        options: options,
+        answer: word,
+        explanation: '$word 来自小学语文生字组词资料。',
+      ));
     }
     final enWords = englishWordsByGrade[grade]!;
     final entries = enWords.entries.toList();
-    for (var i = 0; i < 70; i++) {
+    for (var i = 0; i < entries.length; i++) {
       final entry = entries[i % entries.length];
-      questions.add(PracticeQuestion(id: 'english_${grade}_$i', subject: Subject.english, grade: grade, question: '${entry.key} 的中文意思是？', options: makeMeaningOptions(entry.value), answer: entry.value, explanation: '${entry.key} 表示${entry.value}。'));
+      questions.add(PracticeQuestion(
+        id: 'english_${grade}_$i',
+        subject: Subject.english,
+        grade: grade,
+        question: '${entry.key} 的中文意思是？',
+        options: makeMeaningOptions(entry.value, i),
+        answer: entry.value,
+        explanation: '${entry.key} 表示${entry.value}。',
+      ));
     }
   }
   return questions;
 }
 
-List<String> makeNumberOptions(int answer) {
-  final values = <int>{answer, answer + 1, answer + 3, max(0, answer - 2)}.toList()..sort();
-  return values.map((value) => '$value').toList();
+void addFirstGradeMathQuestions(List<PracticeQuestion> questions) {
+  var index = 1;
+
+  void addQuestion(String question, int answer, String explanation) {
+    questions.add(PracticeQuestion(
+      id: 'math_1_${index++}',
+      subject: Subject.math,
+      grade: 1,
+      question: question,
+      options: makeNumberOptions(answer, index),
+      answer: '$answer',
+      explanation: explanation,
+    ));
+  }
+
+  for (var a = 0; a <= 10; a++) {
+    for (var b = 0; b <= 10; b++) {
+      if (a + b <= 20) {
+        addQuestion('$a + $b = ?', a + b, '把 $a 和 $b 合起来，得 ${a + b}。');
+      }
+    }
+  }
+
+  for (var a = 1; a <= 20; a++) {
+    for (var b = 0; b <= min(10, a); b++) {
+      addQuestion('$a - $b = ?', a - b, '从 $a 里面去掉 $b，剩下 ${a - b}。');
+    }
+  }
+
+  for (var number = 10; number <= 20; number++) {
+    final tens = number ~/ 10;
+    final ones = number % 10;
+    addQuestion('$tens 个十和 $ones 个一合起来是几？', number, '$tens 个十是 ${tens * 10}，再加 $ones 个一，是 $number。');
+  }
+
+  for (var start = 0; start <= 16; start += 2) {
+    addQuestion('$start，${start + 1}，${start + 2}，__', start + 3, '按顺序每次多 1，下一项是 ${start + 3}。');
+  }
+
+  final storyProblems = [
+    ('小明有 6 支铅笔，又买了 4 支，一共有几支？', 10, '6 + 4 = 10。'),
+    ('树上有 12 只鸟，飞走 5 只，还剩几只？', 7, '12 - 5 = 7。'),
+    ('妈妈买了 8 个苹果和 7 个梨，一共买了几个水果？', 15, '8 + 7 = 15。'),
+    ('盒子里有 16 颗糖，吃了 6 颗，还剩几颗？', 10, '16 - 6 = 10。'),
+    ('停车场有 9 辆车，又开来 3 辆，现在有几辆？', 12, '9 + 3 = 12。'),
+    ('花园里有 14 朵花，摘走 4 朵，还剩几朵？', 10, '14 - 4 = 10。'),
+  ];
+  for (final item in storyProblems) {
+    addQuestion(item.$1, item.$2, item.$3);
+  }
+
+  for (var a = 0; a <= 20; a += 2) {
+    final b = (a + 3) % 21;
+    final answer = a == b ? 0 : (a > b ? 1 : -1);
+    final symbol = answer == 0 ? '=' : (answer > 0 ? '>' : '<');
+    questions.add(PracticeQuestion(
+      id: 'math_1_${index++}',
+      subject: Subject.math,
+      grade: 1,
+      question: '$a ○ $b，○ 里应填什么？',
+      options: const ['>', '<', '='],
+      answer: symbol,
+      explanation: '$a 和 $b 比较，应填 $symbol。',
+    ));
+  }
 }
 
-List<String> makeMeaningOptions(String answer) {
+List<String> makeNumberOptions(int answer, int seed) {
+  final values = <int>{answer, answer + 1, answer + 3, max(0, answer - 2)}.toList()..sort();
+  return rotateOptions(values.map((value) => '$value').toList(), seed);
+}
+
+List<String> makeChineseWordOptions(List<String> words, String answer, String target, int seed) {
+  final pool = words.where((item) => item != answer && !item.contains(target)).toList();
+  final values = <String>{answer, ...pool.take(3)}.toList();
+  return rotateOptions(values, seed);
+}
+
+List<String> makeMeaningOptions(String answer, int seed) {
   final pool = englishVocabulary.map((item) => item.meaning).where((item) => item != answer).toList();
-  final values = <String>{answer, ...pool.where((item) => item != answer).take(3)};
-  return values.take(4).toList();
+  final values = <String>{answer, ...pool.where((item) => item != answer).take(3)}.toList();
+  return rotateOptions(values.take(4).toList(), seed);
+}
+
+List<String> rotateOptions(List<String> values, int seed) {
+  if (values.isEmpty) {
+    return values;
+  }
+  final offset = seed % values.length;
+  return [...values.skip(offset), ...values.take(offset)];
 }
 
 class XueBaoShell extends StatefulWidget {
@@ -1659,7 +1898,7 @@ class HomePage extends StatelessWidget {
         const AppPanel(
           icon: Icons.security_outlined,
           title: '本地隐私',
-          child: Text('学习数据只保存在当前手机，不上传服务器。'),
+          child: Text('练习记录保存在当前手机。TTS 朗读和 AI 导入只会调用你在设置中配置的 API。'),
         ),
       ],
     );
@@ -1946,7 +2185,7 @@ class _WordStudyPageState extends State<WordStudyPage> {
 
   Future<void> _speakCurrent() async {
     try {
-      await _tts.speak(text: _words[_index].word, language: Subject.english.ttsLanguage, slow: false);
+      await _tts.speak(text: _words[_index].word, slow: false);
     } catch (error) {
       if (!mounted) {
         return;
@@ -2047,7 +2286,7 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const PageTitle(icon: Icons.record_voice_over_outlined, title: '听写训练', subtitle: '使用手机自带 TTS 朗读'),
+        const PageTitle(icon: Icons.record_voice_over_outlined, title: '听写训练', subtitle: '使用 TTS API 朗读'),
         const SizedBox(height: 20),
         SubjectSelector(
           value: _subject,
@@ -2097,8 +2336,8 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
           builder: (context, snapshot) {
             final custom = snapshot.data ?? [];
             final allItems = _itemsForCurrentSelection(custom);
-            final items = allItems.take(_itemCount).toList();
-            final customCount = items.where((item) => item.id.startsWith('custom_')).length;
+            final selectedCount = min(_itemCount, allItems.length);
+            final customCount = allItems.where((item) => item.id.startsWith('custom_')).length;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -2106,7 +2345,8 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
                   icon: Icons.hearing_outlined,
                   title: '听写说明',
                   child: Text(
-                    '本次听写 ${items.length} 个，可选总量 ${allItems.length} 个，其中自定义 $customCount 个。'
+                    '本次随机听写 $selectedCount 个，可选总量 ${allItems.length} 个，其中自定义 $customCount 个。'
+                    '${_subject == Subject.chinese ? '语文内置词来自生字组词资料。' : '英文听写和背单词共用同一词库。'}'
                     '孩子写在纸上，结束后家长勾选对错。',
                   ),
                 ),
@@ -2157,15 +2397,16 @@ class _DictationEntryPageState extends State<DictationEntryPage> {
                 ),
                 const SizedBox(height: 22),
                 FilledButton.icon(
-                  onPressed: items.isEmpty
+                  onPressed: allItems.isEmpty
                       ? null
                       : () {
+                          final picked = [...allItems]..shuffle(Random());
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => DictationSessionPage(
                                 subject: _subject,
                                 grade: _grade,
-                                items: items,
+                                items: picked.take(_itemCount).toList(),
                                 autoNextSeconds: _autoNextSeconds,
                               ),
                             ),
@@ -2966,7 +3207,7 @@ class _DictationSessionPageState extends State<DictationSessionPage> {
     _autoTimer?.cancel();
     final item = widget.items[_index];
     try {
-      await _tts.speak(text: item.text, language: widget.subject.ttsLanguage, slow: _slow);
+      await _tts.speak(text: item.text, slow: _slow);
       _scheduleAutoNext();
     } catch (error) {
       if (!mounted) {
@@ -3308,52 +3549,35 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const PageTitle(icon: Icons.settings_outlined, title: '设置', subtitle: '手机自带 TTS 和 API 兜底'),
+        const PageTitle(icon: Icons.settings_outlined, title: '设置', subtitle: 'TTS API 和本机数据'),
         const SizedBox(height: 16),
-        AppPanel(
-          icon: Icons.volume_up_outlined,
-          title: '手机自带 TTS 测试',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('朗读效果由手机自带语音引擎决定。若无法朗读，请在手机设置中安装中文或英文语音包。'),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  FilledButton.tonalIcon(
-                    onPressed: () => _speak('zh-CN', '你好，欢迎使用学宝。'),
-                    icon: const Icon(Icons.record_voice_over_outlined),
-                    label: const Text('测试中文'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: () => _speak('en-US', 'Hello, welcome to Xuebao.'),
-                    icon: const Icon(Icons.record_voice_over_outlined),
-                    label: const Text('测试英文'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
         FutureBuilder<TtsApiConfig>(
           future: _ttsFuture,
           builder: (context, snapshot) {
             final config = snapshot.data ?? TtsApiConfig.empty;
             return AppPanel(
               icon: Icons.graphic_eq_outlined,
-              title: 'TTS API 兜底',
+              title: 'TTS API',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(config.isReady ? '已开启：${config.model} / ${config.voice}' : '默认使用手机自带 TTS。手机自带 TTS 不可用时，可配置 OpenAI 格式 TTS API。'),
+                  Text(config.isReady ? '已开启：${config.model} / ${config.voice}' : '未开启。听写和背单词朗读需要 OpenAI 格式 /audio/speech API。'),
                   const SizedBox(height: 12),
-                  FilledButton.tonalIcon(
-                    onPressed: _openTtsApiSettings,
-                    icon: const Icon(Icons.tune_outlined),
-                    label: const Text('配置 TTS API'),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: _openTtsApiSettings,
+                        icon: const Icon(Icons.tune_outlined),
+                        label: const Text('配置 TTS API'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _speak('你好，欢迎使用学宝。'),
+                        icon: const Icon(Icons.record_voice_over_outlined),
+                        label: const Text('测试朗读'),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -3387,7 +3611,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const AppPanel(
           icon: Icons.lock_outline,
           title: '隐私',
-          child: Text('学宝不需要登录，不上传学习数据。错题、听写和成绩记录只保存在本机。'),
+          child: Text('学宝不需要登录。错题、听写和成绩记录保存在本机；TTS 和 AI 功能会调用你配置的 API。'),
         ),
         const SizedBox(height: 12),
         const AppPanel(
@@ -3399,9 +3623,9 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _speak(String language, String text) async {
+  Future<void> _speak(String text) async {
     try {
-      await _tts.speak(text: text, language: language, slow: false);
+      await _tts.speak(text: text, slow: false);
     } catch (error) {
       if (!mounted) {
         return;
@@ -3552,8 +3776,8 @@ class _TtsApiSettingsPageState extends State<TtsApiSettingsPage> {
           SwitchListTile(
             value: _enabled,
             onChanged: (value) => setState(() => _enabled = value),
-            title: const Text('启用 TTS API 兜底'),
-            subtitle: const Text('优先使用手机自带 TTS；手机自带 TTS 报错时才调用这里配置的 OpenAI 格式 /audio/speech。'),
+            title: const Text('启用 TTS API'),
+            subtitle: const Text('听写和背单词会直接调用这里配置的 OpenAI 格式 /audio/speech。'),
           ),
           const SizedBox(height: 12),
           TextField(controller: _baseUrl, decoration: const InputDecoration(labelText: 'Base URL', border: OutlineInputBorder())),
