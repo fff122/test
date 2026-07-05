@@ -756,7 +756,7 @@ class AppTtsService {
     if (!config.isReady) {
       throw FormatException(
         '手机自带 TTS 无法朗读。请到设置里启用并填写 OpenAI 格式 TTS API。'
-        '${systemError == null ? '' : '\n手机自带 TTS 错误：$systemError'}',
+        '\n手机自带 TTS 错误：$systemError',
       );
     }
     await _speakWithApi(config: config, text: text, slow: slow);
@@ -1643,7 +1643,7 @@ class _QuestionImportPageState extends State<QuestionImportPage> {
       final text = await AiImportService.analyzeImage(
         config: config,
         image: image,
-        instruction: '请识别图片中的小学${_subject.label}${_grade}年级练习题，并整理成纯文本。'
+        instruction: '请识别图片中的小学${_subject.label}$_grade年级练习题，并整理成纯文本。'
             '每行一道题。选择题格式：题目|选项1|选项2|选项3|选项4|答案|解析。'
             '填空题格式：题目=答案。不要输出解释说明，不要输出 Markdown。',
       );
@@ -1908,8 +1908,8 @@ class _DictationImportPageState extends State<DictationImportPage> {
         config: config,
         image: image,
         instruction: _subject == Subject.english
-            ? '请识别图片中的小学英语${_grade}年级单词或短语，整理为纯文本，每行一个英文单词或短语。不要输出中文解释，不要输出 Markdown。'
-            : '请识别图片中的小学语文${_grade}年级听写词语，整理为纯文本，每行一个词语。不要输出拼音、解释、序号或 Markdown。',
+            ? '请识别图片中的小学英语$_grade年级单词或短语，整理为纯文本，每行一个英文单词或短语。不要输出中文解释，不要输出 Markdown。'
+            : '请识别图片中的小学语文$_grade年级听写词语，整理为纯文本，每行一个词语。不要输出拼音、解释、序号或 Markdown。',
       );
 
       if (mounted) {
